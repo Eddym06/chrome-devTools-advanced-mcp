@@ -17,20 +17,29 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
       }),
       handler: async ({ tabId }: any) => {
         const client = await connector.getTabClient(tabId);
-        const { ServiceWorker } = client;
+        const { Runtime } = client;
         
-        await ServiceWorker.enable();
+        await Runtime.enable();
         
-        const { registrations } = await ServiceWorker.getRegistrations();
+        // Use JavaScript to query service workers
+        const result = await Runtime.evaluate({
+          expression: `
+            (async () => {
+              const registrations = await navigator.serviceWorker.getRegistrations();
+              return registrations.map(reg => ({
+                scope: reg.scope,
+                scriptURL: reg.active ? reg.active.scriptURL : null,
+                state: reg.active ? reg.active.state : 'none',
+                installing: reg.installing ? reg.installing.scriptURL : null,
+                waiting: reg.waiting ? reg.waiting.scriptURL : null
+              }));
+            })()
+          `,
+          awaitPromise: true,
+          returnByValue: true
+        });
         
-        const workers: ServiceWorkerInfo[] = registrations.map((reg: any) => ({
-          registrationId: reg.registrationId,
-          scopeURL: reg.scopeURL,
-          scriptURL: reg.scriptURL || '',
-          status: reg.status || 'unknown',
-          versionId: reg.versionId || '',
-          runningStatus: reg.runningStatus
-        }));
+        const workers = result.result.value || [];
         
         return {
           success: true,
@@ -85,14 +94,29 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
       }),
       handler: async ({ scopeURL, tabId }: any) => {
         const client = await connector.getTabClient(tabId);
-        const { ServiceWorker } = client;
+        const { Runtime } = client;
         
-        await ServiceWorker.enable();
-        await ServiceWorker.unregister({ scopeURL });
+        await Runtime.enable();
+        
+        const result = await Runtime.evaluate({
+          expression: `
+            (async () => {
+              const registrations = await navigator.serviceWorker.getRegistrations();
+              const reg = registrations.find(r => r.scope === '${scopeURL}');
+              if (reg) {
+                const unregistered = await reg.unregister();
+                return { success: unregistered };
+              }
+              return { success: false, error: 'Not found' };
+            })()
+          `,
+          awaitPromise: true,
+          returnByValue: true
+        });
         
         return {
-          success: true,
-          message: `Service worker unregistered: ${scopeURL}`
+          success: result.result.value.success,
+          message: `Service worker unregister ${result.result.value.success ? 'successful' : 'failed'}: ${scopeURL}`
         };
       }
     },
@@ -107,13 +131,28 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
       }),
       handler: async ({ scopeURL, tabId }: any) => {
         const client = await connector.getTabClient(tabId);
-        const { ServiceWorker } = client;
+        const { Runtime } = client;
         
-        await ServiceWorker.enable();
-        await ServiceWorker.updateRegistration({ scopeURL });
+        await Runtime.enable();
+        
+        const result = await Runtime.evaluate({
+          expression: `
+            (async () => {
+              const registrations = await navigator.serviceWorker.getRegistrations();
+              const reg = registrations.find(r => r.scope === '${scopeURL}');
+              if (reg) {
+                await reg.update();
+                return { success: true };
+              }
+              return { success: false, error: 'Not found' };
+            })()
+          `,
+          awaitPromise: true,
+          returnByValue: true
+        });
         
         return {
-          success: true,
+          success: result.result.value.success,
           message: `Service worker update triggered: ${scopeURL}`
         };
       }
