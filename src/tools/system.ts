@@ -13,55 +13,79 @@ export function createSystemTools(connector: ChromeConnector) {
     {
       name: 'list_all_targets',
       description: 'List all Chrome targets including extension service workers, background pages, and more',
-      inputSchema: z.object({}),
-      handler: async () => {
+      inputSchema: z.object({
+        filterType: z.enum(['all', 'service_worker', 'background_page', 'page', 'iframe', 'worker']).optional().describe('Filter by target type')
+      }),
+      handler: async ({ filterType }: any) => {
         const port = connector.getPort();
         const targets = await CDP.List({ port });
         
+        // Apply filter if specified
+        const filteredTargets = filterType && filterType !== 'all' 
+          ? targets.filter((t: any) => t.type === filterType)
+          : targets;
+        
         // Categorize targets
-        const pages = targets.filter((t: any) => t.type === 'page');
-        const serviceWorkers = targets.filter((t: any) => t.type === 'service_worker');
-        const backgroundPages = targets.filter((t: any) => t.type === 'background_page');
-        const others = targets.filter((t: any) => 
-          !['page', 'service_worker', 'background_page'].includes(t.type)
+        const pages = filteredTargets.filter((t: any) => t.type === 'page');
+        const serviceWorkers = filteredTargets.filter((t: any) => t.type === 'service_worker');
+        const backgroundPages = filteredTargets.filter((t: any) => t.type === 'background_page');
+        const iframes = filteredTargets.filter((t: any) => t.type === 'iframe');
+        const workers = filteredTargets.filter((t: any) => t.type === 'worker');
+        const others = filteredTargets.filter((t: any) => 
+          !['page', 'service_worker', 'background_page', 'iframe', 'worker'].includes(t.type)
         );
+        
+        // Separate extension service workers from web service workers
+        const extensionSWs = serviceWorkers.filter((t: any) => t.url.startsWith('chrome-extension://'));
+        const webSWs = serviceWorkers.filter((t: any) => !t.url.startsWith('chrome-extension://'));
         
         return {
           success: true,
-          total: targets.length,
+          total: filteredTargets.length,
           breakdown: {
             pages: pages.length,
             serviceWorkers: serviceWorkers.length,
+            extensionServiceWorkers: extensionSWs.length,
+            webServiceWorkers: webSWs.length,
             backgroundPages: backgroundPages.length,
+            iframes: iframes.length,
+            workers: workers.length,
             others: others.length
           },
           targets: {
-            pages: pages.map((t: any) => ({
+            extensionServiceWorkers: extensionSWs.map((t: any) => ({
               id: t.id,
               title: t.title,
               url: t.url,
-              type: t.type
+              extensionId: t.url.match(/chrome-extension:\/\/([^\/]+)/)?.[1] || 'unknown',
+              scriptPath: t.url.split('/').pop() || 'unknown',
+              description: t.description,
+              webSocketDebuggerUrl: t.webSocketDebuggerUrl
             })),
-            serviceWorkers: serviceWorkers.map((t: any) => ({
+            webServiceWorkers: webSWs.map((t: any) => ({
               id: t.id,
               title: t.title,
               url: t.url,
-              type: t.type,
-              description: t.description
+              description: t.description,
+              webSocketDebuggerUrl: t.webSocketDebuggerUrl
             })),
             backgroundPages: backgroundPages.map((t: any) => ({
               id: t.id,
               title: t.title,
               url: t.url,
+              extensionId: t.url.match(/chrome-extension:\/\/([^\/]+)/)?.[1],
               type: t.type
             })),
-            others: others.map((t: any) => ({
+            pages: pages.slice(0, 10).map((t: any) => ({
               id: t.id,
-              title: t.title,
-              url: t.url,
-              type: t.type
-            }))
-          }
+              title: t.title?.substring(0, 80) || 'No title',
+              url: t.url?.substring(0, 100) || 'No URL'
+            })),
+            iframes: iframes.length > 0 ? `${iframes.length} iframes found` : [],
+            workers: workers.length > 0 ? `${workers.length} workers found` : [],
+            others: others.length > 0 ? `${others.length} other targets found` : []
+          },
+          message: filterType ? `Filtered by: ${filterType}` : 'Showing all targets'
         };
       }
     },
@@ -75,8 +99,16 @@ export function createSystemTools(connector: ChromeConnector) {
       }),
       handler: async ({ targetId }: any) => {
         const port = connector.getPort();
-        const client = await CDP({ port, target: targetId });
+        // Use a finder function to safely identify the target
+        const client = await CDP({ 
+          port, 
+          target: (targets: any[]) => targets.find((t: any) => t.id === targetId)
+        });
         
+        if (!client) {
+             throw new Error(`Failed to connect to target ${targetId}`);
+        }
+
         const { Runtime } = client;
         await Runtime.enable();
         
@@ -108,8 +140,16 @@ export function createSystemTools(connector: ChromeConnector) {
       }),
       handler: async ({ targetId, script, awaitPromise }: any) => {
         const port = connector.getPort();
-        const client = await CDP({ port, target: targetId });
+        // Use a finder function to safely identify the target
+        const client = await CDP({ 
+          port, 
+          target: (targets: any[]) => targets.find((t: any) => t.id === targetId)
+        });
         
+        if (!client) {
+             throw new Error(`Failed to connect to target ${targetId}`);
+        }
+
         const { Runtime } = client;
         await Runtime.enable();
         
@@ -136,51 +176,96 @@ export function createSystemTools(connector: ChromeConnector) {
     // Get extension service worker details
     {
       name: 'get_extension_service_workers',
-      description: 'Get all extension service workers with detailed information',
-      inputSchema: z.object({}),
-      handler: async () => {
+      description: 'Get all extension service workers with detailed information and runtime access',
+      inputSchema: z.object({
+        executeTest: z.boolean().optional().default(false).describe('Execute a test script to verify chrome.runtime access')
+      }),
+      handler: async ({ executeTest }: any) => {
         const port = connector.getPort();
         const targets = await CDP.List({ port });
         
-        const serviceWorkers = targets.filter((t: any) => t.type === 'service_worker');
+        const serviceWorkers = targets.filter((t: any) => 
+          t.type === 'service_worker' && t.url.startsWith('chrome-extension://')
+        );
+        
+        if (serviceWorkers.length === 0) {
+          return {
+            success: true,
+            count: 0,
+            message: 'No extension service workers found. Make sure Chrome/Edge is opened with extensions enabled.',
+            serviceWorkers: []
+          };
+        }
         
         const details = await Promise.all(
           serviceWorkers.map(async (sw: any) => {
             try {
-              const client = await CDP({ port, target: sw.id });
+              // Connect using finder function
+              const client = await CDP({ 
+                 port, 
+                 target: (targets: any[]) => targets.find((t: any) => t.id === sw.id)
+              });
+              
+              if (!client) throw new Error("Could not connect");
+
               const { Runtime } = client;
               await Runtime.enable();
               
-              // Try to get extension info
+              // Get comprehensive extension info
+              const infoScript = `
+                JSON.stringify({
+                  hasChrome: typeof chrome !== 'undefined',
+                  hasRuntime: typeof chrome !== 'undefined' && typeof chrome.runtime !== 'undefined',
+                  extensionId: typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.id : null,
+                  manifest: typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.getManifest() : null,
+                  contextType: typeof ServiceWorkerGlobalScope !== 'undefined' ? 'ServiceWorker' : typeof self !== 'undefined' ? 'Worker' : 'Unknown'
+                })
+              `;
+              
               const info = await Runtime.evaluate({
-                expression: `
-                  JSON.stringify({
-                    hasChrome: typeof chrome !== 'undefined',
-                    hasRuntime: typeof chrome !== 'undefined' && typeof chrome.runtime !== 'undefined',
-                    extensionId: typeof chrome !== 'undefined' && chrome.runtime ? chrome.runtime.id : null
-                  })
-                `,
-                returnByValue: true
+                expression: infoScript,
+                returnByValue: true,
+                awaitPromise: false
               });
+              
+              let testResult = null;
+              if (executeTest) {
+                const test = await Runtime.evaluate({
+                  expression: 'typeof chrome !== "undefined" ? "Chrome API Available" : "No Chrome API"',
+                  returnByValue: true
+                });
+                testResult = test.result.value;
+              }
               
               await client.close();
               
               const extInfo = JSON.parse(info.result.value || '{}');
+              const extensionId = sw.url.match(/chrome-extension:\/\/([^\/]+)/)?.[1];
               
               return {
                 id: sw.id,
                 title: sw.title,
                 url: sw.url,
+                extensionId: extensionId,
+                scriptFile: sw.url.split('/').pop(),
                 description: sw.description,
-                extensionId: extInfo.extensionId,
-                hasChrome: extInfo.hasChrome,
-                hasRuntime: extInfo.hasRuntime
+                webSocketDebuggerUrl: sw.webSocketDebuggerUrl,
+                runtimeInfo: {
+                  hasChrome: extInfo.hasChrome,
+                  hasRuntime: extInfo.hasRuntime,
+                  contextType: extInfo.contextType,
+                  manifestName: extInfo.manifest?.name,
+                  manifestVersion: extInfo.manifest?.version,
+                  permissions: extInfo.manifest?.permissions?.slice(0, 5)
+                },
+                testResult: executeTest ? testResult : undefined
               };
             } catch (error) {
               return {
                 id: sw.id,
                 title: sw.title,
                 url: sw.url,
+                extensionId: sw.url.match(/chrome-extension:\/\/([^\/]+)/)?.[1],
                 error: (error as Error).message
               };
             }
@@ -190,7 +275,12 @@ export function createSystemTools(connector: ChromeConnector) {
         return {
           success: true,
           count: details.length,
-          serviceWorkers: details
+          serviceWorkers: details,
+          summary: {
+            total: details.length,
+            successful: details.filter(d => !d.error).length,
+            failed: details.filter(d => d.error).length
+          }
         };
       }
     }
