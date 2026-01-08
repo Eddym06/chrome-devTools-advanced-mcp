@@ -206,7 +206,7 @@ export function createInteractionTools(connector: ChromeConnector) {
           expression: script,
           awaitPromise,
           returnByValue: true
-        }), timeout, 'Script execution timed out');
+        }), timeout, 'Script execution timed out') as any;
         
         if (result.exceptionDetails) {
           throw new Error(`Script execution failed: ${result.exceptionDetails.text}`);
