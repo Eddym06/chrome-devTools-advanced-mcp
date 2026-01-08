@@ -1,6 +1,12 @@
 # Custom Chrome MCP 🚀
 
-Un servidor MCP (Model Context Protocol) personalizado y mejorado para Chrome con capacidades avanzadas de automatización, anti-detección, gestión de Service Workers y mucho más.
+Cross-platform Model Context Protocol (MCP) server for advanced Chrome browser automation and control. Works on Windows, macOS, and Linux.
+
+## 🌍 Platform Support
+
+- ✅ **Windows** - Full support with robocopy-based Shadow Profile
+- ✅ **macOS** - Full support with rsync-based Shadow Profile  
+- ✅ **Linux** - Full support with rsync-based Shadow Profile
 
 ## ✨ Características Principales
 
@@ -16,6 +22,12 @@ Un servidor MCP (Model Context Protocol) personalizado y mejorado para Chrome co
 - User-Agent personalizable
 - Timezone y geolocalización configurable
 - Scripts anti-detección automáticos
+
+### 🔒 Shadow Profile System
+- **Bypasses Chrome's Default profile debugging restriction**
+- Platform-specific cloning (robocopy on Windows, rsync on Unix)
+- Automatic encryption key preservation
+- Skips cache folders for fast copying
 
 ### ⚙️ Gestión Completa de Service Workers
 - Listar todos los Service Workers registrados
@@ -46,8 +58,26 @@ Un servidor MCP (Model Context Protocol) personalizado y mejorado para Chrome co
 
 ## 📦 Instalación
 
-### Desde npm (cuando se publique)
+### Desde GitHub Packages
+
+1. Crea un archivo `.npmrc` en tu proyecto:
 ```bash
+//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN
+@eddym06:registry=https://npm.pkg.github.com
+```
+
+2. Instala el paquete:
+```bash
+npm install @eddym06/custom-chrome-mcp
+```
+
+### Desde el código fuente
+```bash
+git clone https://github.com/Eddym06/devTools-Advance-mcp.git
+cd custom-chrome-mcp
+npm install
+npm run build
+```
 npm install -g custom-chrome-mcp
 ```
 

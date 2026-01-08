@@ -1,12 +1,15 @@
 {
-  "name": "custom-chrome-mcp",
-  "version": "1.0.0",
-  "description": "Custom Chrome MCP with enhanced features: connect to existing Chrome, anti-detection, service workers, session management, and more",
+  "name": "@eddym06/custom-chrome-mcp",
+  "version": "1.0.1",
+  "description": "Cross-platform Chrome MCP with enhanced features: connect to existing Chrome, anti-detection, service workers, session management, Shadow Profile system, and more. Works on Windows, Mac, and Linux.",
   "main": "dist/index.js",
   "bin": {
     "custom-chrome-mcp": "./dist/index.js"
   },
   "type": "module",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -23,7 +26,13 @@
     "cdp",
     "service-worker",
     "anti-detection",
-    "model-context-protocol"
+    "model-context-protocol",
+    "cross-platform",
+    "windows",
+    "mac",
+    "linux",
+    "playwright",
+    "browser-automation"
   ],
   "author": "Eddy M",
   "license": "MIT",

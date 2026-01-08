@@ -47,11 +47,40 @@ export class ChromeConnector {
   }
 
   /**
+   * Get platform-specific Chrome paths
+   */
+  private getPlatformPaths(): { executable: string; userDataDir: string } {
+    const platform = os.platform();
+    
+    switch (platform) {
+      case 'win32':
+        return {
+          executable: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+          userDataDir: `${process.env.LOCALAPPDATA}\\Google\\Chrome\\User Data`
+        };
+      case 'darwin':
+        return {
+          executable: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+          userDataDir: `${process.env.HOME}/Library/Application Support/Google/Chrome`
+        };
+      case 'linux':
+        return {
+          executable: '/usr/bin/google-chrome',
+          userDataDir: `${process.env.HOME}/.config/google-chrome`
+        };
+      default:
+        throw new Error(`Unsupported platform: ${platform}`);
+    }
+  }
+
+  /**
    * createShadowProfile: Clones essential parts of the profile to a temp dir
    * to bypass Chrome's restriction on debugging the Default profile.
+   * Cross-platform: uses robocopy on Windows, rsync on Unix systems.
    */
   private async createShadowProfile(sourceUserData: string, profileName: string): Promise<string> {
     const tempDir = path.join(os.tmpdir(), 'chrome-mcp-shadow');
+    const platform = os.platform();
     
     // Ensure parent dir exists
     if (!fs.existsSync(tempDir)) {
@@ -59,26 +88,24 @@ export class ChromeConnector {
     }
 
     console.error(`👥 Creating Shadow Profile structure at: ${tempDir}`);
+    console.error(`   Platform: ${platform}`);
     console.error(`   Source: ${sourceUserData}`);
 
     // 1. Copy Local State (critical for encryption keys + profiles list)
-    // This MUST reside in the User Data Root
     const localStateSrc = path.join(sourceUserData, 'Local State');
     const localStateDest = path.join(tempDir, 'Local State');
     try {
         if (fs.existsSync(localStateSrc)) {
-            // Check if newer? Just overwrite for now to be safe
             fs.copyFileSync(localStateSrc, localStateDest);
         }
     } catch (e) { console.error('Warning: could not copy Local State', e); }
 
-    // 2. Robocopy the profile folder
-    // We use robocopy for speed and easy exclusion
+    // 2. Copy the profile folder (platform-specific)
     const profileSrc = path.join(sourceUserData, profileName);
     const profileDest = path.join(tempDir, profileName);
     
-    // Exclude heavy cache folders to makes launch fast
-    const xdirs = [
+    // Exclude heavy cache folders to make launch fast
+    const excludeDirs = [
         "Cache", 
         "Code Cache", 
         "GPUCache", 
@@ -86,27 +113,37 @@ export class ChromeConnector {
         "ShaderCache",
         "Safe Browsing",
         "File System",
-        "Service Worker\\CacheStorage",
-        "Service Worker\\ScriptCache"
+        "Service Worker/CacheStorage",
+        "Service Worker/ScriptCache"
     ];
     
-    // Create params
-    const xdParams = xdirs.map(d => `"${d}"`).join(' ');
-    // /MIR = Mirror (copy recursive, delete extras)
-    // /XD = Exclude Directories
-    // /R:0 /W:0 = No retries (ignore locked files)
-    // /XJ = Exclude Junction points
-    // /MT:16 = Multi-threaded copy (fast)
-    const cmd = `robocopy "${profileSrc}" "${profileDest}" /MIR /XD ${xdParams} /R:0 /W:0 /XJ /MT:16`;
+    let cmd: string;
     
-    try {
-        await execAsync(cmd);
-    } catch (e: any) {
-        // Robocopy exit codes: 0-7 are success/partial success. 8+ is failure.
-        // We expect code 1 (files copied) or 0 (no changes) or 2/3 (extra files detected)
-        if (e.code > 7) {
-            console.error('⚠️ Shadow Profile copy had errors (extensions might be missing):', e.message);
-        }
+    if (platform === 'win32') {
+      // Windows: use robocopy
+      const xdParams = excludeDirs.map(d => `"${d}"`).join(' ');
+      // /MIR = Mirror, /XD = Exclude Dirs, /R:0 /W:0 = No retries, /XJ = No junctions, /MT = Multi-thread
+      cmd = `robocopy "${profileSrc}" "${profileDest}" /MIR /XD ${xdParams} /R:0 /W:0 /XJ /MT:16`;
+      
+      try {
+          await execAsync(cmd);
+      } catch (e: any) {
+          // Robocopy exit codes: 0-7 are success/partial, 8+ is failure
+          if (e.code > 7) {
+              console.error('⚠️ Shadow Profile copy had errors:', e.message);
+          }
+      }
+    } else {
+      // Unix (Mac/Linux): use rsync
+      const excludeParams = excludeDirs.map(d => `--exclude="${d}"`).join(' ');
+      cmd = `rsync -av --delete ${excludeParams} "${profileSrc}/" "${profileDest}/"`;
+      
+      try {
+          await execAsync(cmd);
+          console.error('✅ Profile copied via rsync');
+      } catch (e: any) {
+          console.error('⚠️ Shadow Profile copy had errors:', e.message);
+      }
     }
     
     return tempDir;
@@ -132,13 +169,15 @@ export class ChromeConnector {
       // Port free, proceed
     }
     
+    const platformPaths = this.getPlatformPaths();
+    
     let {
       userDataDir,
       profileDirectory = 'Default',
-      executablePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+      executablePath = platformPaths.executable
     } = options;
 
-    const originalUserDataDir = userDataDir || `${process.env.LOCALAPPDATA}\\Google\\Chrome\\User Data`;
+    const originalUserDataDir = userDataDir || platformPaths.userDataDir;
     
     // Default to the original unless shadowed
     let finalUserDataDir = originalUserDataDir;
