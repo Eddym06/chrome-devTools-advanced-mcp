@@ -2,6 +2,21 @@
 
 Cross-platform Model Context Protocol (MCP) server for advanced Chrome browser automation and control. Works on Windows, macOS, and Linux.
 
+## 📦 Quick Install for VS Code
+
+Add this to your `mcp.json` config file:
+
+```json
+{
+  "mcpServers": {
+    "custom-chrome-mcp": {
+      "command": "npx",
+      "args": ["-y", "@eddym06/custom-chrome-mcp", "--port=9222"]
+    }
+  }
+}
+```
+
 ## 🌍 Platform Support
 
 - ✅ **Windows** - Full support with robocopy-based Shadow Profile
