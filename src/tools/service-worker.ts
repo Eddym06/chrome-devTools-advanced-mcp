@@ -158,7 +158,7 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
           },
           note: logs.length === 0 ? 
               "No logs captured. Service Worker extensions may have limited console.log emission via CDP. Try using Log.entryAdded or check Chrome DevTools directly." :
-              `Successfully captured ${logs.length} log entries`
+              `Successfully captured ${logs.length} log entries. REMINDER: This targetId (${targetId}) is for the Service Worker. To click elements or execute DOM scripts, use the main PAGE/TAB ID from list_tabs, NOT this ID.`
         };
       }
     },

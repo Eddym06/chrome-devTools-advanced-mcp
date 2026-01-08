@@ -186,10 +186,10 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Execute JavaScript
     {
       name: 'execute_script',
-      description: 'Execute JavaScript code in the page context',
+      description: 'Execute JavaScript code in the PAGE context. IMPORTANT: Do NOT use a Service Worker ID as tabId. Only use the main Tab/Page ID. If you need to debug a Service Worker, use inspect_service_worker_logs.',
       inputSchema: z.object({
         script: z.string().describe('JavaScript code to execute'),
-        tabId: z.string().optional().describe('Tab ID (optional)'),
+        tabId: z.string().optional().describe('Tab ID (optional) - MUST be a Page/Tab ID, not a Service Worker ID'),
         awaitPromise: z.boolean().optional().default(false).describe('Wait for promise to resolve')
       }),
       handler: async ({ script, tabId, awaitPromise }: any) => {
