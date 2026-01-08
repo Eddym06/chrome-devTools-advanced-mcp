@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import type { ChromeConnector } from '../chrome-connector.js';
-import { isValidUrl, humanDelay } from '../utils/helpers.js';
+import { isValidUrl, humanDelay, withTimeout } from '../utils/helpers.js';
 
 export function createNavigationTools(connector: ChromeConnector) {
   return [
@@ -16,9 +16,10 @@ export function createNavigationTools(connector: ChromeConnector) {
         url: z.string().describe('URL to navigate to'),
         tabId: z.string().optional().describe('Tab ID (optional, uses current tab if not specified)'),
         waitUntil: z.enum(['load', 'domcontentloaded', 'networkidle']).optional().default('load')
-          .describe('Wait until this event fires')
+          .describe('Wait until this event fires'),
+        timeout: z.number().optional().default(30000).describe('Timeout in milliseconds')
       }),
-      handler: async ({ url, tabId, waitUntil }: any) => {
+      handler: async ({ url, tabId, waitUntil, timeout = 30000 }: any) => {
         if (!isValidUrl(url)) {
           throw new Error(`Invalid URL: ${url}`);
         }
@@ -30,11 +31,15 @@ export function createNavigationTools(connector: ChromeConnector) {
         await Page.navigate({ url });
         
         // Wait for the specified event
-        if (waitUntil === 'load') {
-          await Page.loadEventFired();
-        } else if (waitUntil === 'domcontentloaded') {
-          await Page.domContentEventFired();
-        }
+        const waitPromise = (async () => {
+             if (waitUntil === 'load') {
+               await Page.loadEventFired();
+             } else if (waitUntil === 'domcontentloaded') {
+               await Page.domContentEventFired();
+             }
+        })();
+        
+        await withTimeout(waitPromise, timeout, `Navigation to ${url} timed out`);
         
         await humanDelay();
         

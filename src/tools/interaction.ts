@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import type { ChromeConnector } from '../chrome-connector.js';
-import { humanDelay, waitFor } from '../utils/helpers.js';
+import { humanDelay, waitFor, withTimeout } from '../utils/helpers.js';
 
 export function createInteractionTools(connector: ChromeConnector) {
   return [
@@ -15,9 +15,10 @@ export function createInteractionTools(connector: ChromeConnector) {
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of element to click'),
         tabId: z.string().optional().describe('Tab ID (optional)'),
-        waitForSelector: z.boolean().optional().default(true).describe('Wait for selector to be visible')
+        waitForSelector: z.boolean().optional().default(true).describe('Wait for selector to be visible'),
+        timeout: z.number().optional().default(30000).describe('Timeout in milliseconds')
       }),
-      handler: async ({ selector, tabId, waitForSelector }: any) => {
+      handler: async ({ selector, tabId, waitForSelector, timeout = 30000 }: any) => {
         const client = await connector.getTabClient(tabId);
         const { Runtime, DOM } = client;
         
@@ -31,10 +32,10 @@ export function createInteractionTools(connector: ChromeConnector) {
               expression: `document.querySelector('${selector}') !== null`
             });
             return result.result.value === true;
-          }, 10000);
+          }, timeout);
           
           if (!found) {
-            throw new Error(`Selector not found: ${selector}`);
+            throw new Error(`Selector not found: ${selector} (timeout ${timeout}ms)`);
           }
         }
         
@@ -42,7 +43,7 @@ export function createInteractionTools(connector: ChromeConnector) {
         await humanDelay(100, 300);
         
         // Click the element
-        await Runtime.evaluate({
+        await withTimeout(Runtime.evaluate({
           expression: `
             (function() {
               const el = document.querySelector('${selector}');
@@ -51,8 +52,9 @@ export function createInteractionTools(connector: ChromeConnector) {
               el.click();
               return true;
             })()
-          `
-        });
+          `,
+          awaitPromise: true
+        }), timeout, 'Click action timed out');
         
         await humanDelay();
         
@@ -71,9 +73,10 @@ export function createInteractionTools(connector: ChromeConnector) {
         selector: z.string().describe('CSS selector of input element'),
         text: z.string().describe('Text to type'),
         tabId: z.string().optional().describe('Tab ID (optional)'),
-        clearFirst: z.boolean().optional().default(true).describe('Clear existing text first')
+        clearFirst: z.boolean().optional().default(true).describe('Clear existing text first'),
+        timeout: z.number().optional().default(30000).describe('Timeout in milliseconds')
       }),
-      handler: async ({ selector, text, tabId, clearFirst }: any) => {
+      handler: async ({ selector, text, tabId, clearFirst, timeout = 30000 }: any) => {
         const client = await connector.getTabClient(tabId);
         const { Runtime } = client;
         
@@ -103,7 +106,7 @@ export function createInteractionTools(connector: ChromeConnector) {
           })()
         `;
         
-        await Runtime.evaluate({ expression: script, awaitPromise: true });
+        await withTimeout(Runtime.evaluate({ expression: script, awaitPromise: true }), timeout, 'Type action timed out');
         await humanDelay();
         
         return {
@@ -190,19 +193,20 @@ export function createInteractionTools(connector: ChromeConnector) {
       inputSchema: z.object({
         script: z.string().describe('JavaScript code to execute'),
         tabId: z.string().optional().describe('Tab ID (optional) - MUST be a Page/Tab ID, not a Service Worker ID'),
-        awaitPromise: z.boolean().optional().default(false).describe('Wait for promise to resolve')
+        awaitPromise: z.boolean().optional().default(false).describe('Wait for promise to resolve'),
+        timeout: z.number().optional().default(30000).describe('Timeout in milliseconds')
       }),
-      handler: async ({ script, tabId, awaitPromise }: any) => {
+      handler: async ({ script, tabId, awaitPromise, timeout = 30000 }: any) => {
         const client = await connector.getTabClient(tabId);
         const { Runtime } = client;
         
         await Runtime.enable();
         
-        const result = await Runtime.evaluate({
+        const result = await withTimeout(Runtime.evaluate({
           expression: script,
           awaitPromise,
           returnByValue: true
-        });
+        }), timeout, 'Script execution timed out');
         
         if (result.exceptionDetails) {
           throw new Error(`Script execution failed: ${result.exceptionDetails.text}`);

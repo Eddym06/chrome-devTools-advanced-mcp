@@ -463,16 +463,27 @@ export class ChromeConnector {
       
       if (!target) {
         // Get the first available tab
-        const tabs = await this.listTabs();
+        // If this fails, it means Chrome is definitely not running
+        let tabs;
+        try {
+            tabs = await this.listTabs();
+        } catch (e) {
+            throw new Error('Chrome is not running or not connected. Please use the "launch_chrome_with_profile" tool first to start the browser.');
+        }
+
         if (tabs.length === 0) {
-          throw new Error('No tabs available');
+          throw new Error('No tabs available. Chrome is running but has no open tabs.');
         }
         return await CDP({ port: this.port, target: tabs[0].id });
       }
       
       return await CDP({ port: this.port, target });
     } catch (error) {
-      throw new Error(`Failed to get tab client: ${(error as Error).message}`);
+      const err = error as Error;
+      if (err.message && (err.message.includes('ECONNREFUSED') || err.message.includes('connect'))) {
+          throw new Error('Chrome is not running or not connected. Please use the "launch_chrome_with_profile" tool first to start the browser.');
+      }
+      throw new Error(`Failed to get tab client: ${err.message}`);
     }
   }
 
