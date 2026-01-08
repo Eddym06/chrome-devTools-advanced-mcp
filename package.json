@@ -30,6 +30,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.4",
     "chrome-remote-interface": "^0.33.2",
+    "playwright": "^1.57.0",
+    "playwright-core": "^1.57.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

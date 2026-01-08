@@ -49,6 +49,120 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
       }
     },
 
+    // Inspect service worker console logs
+    {
+      name: 'inspect_service_worker_logs',
+      description: 'Get recent console logs from a specific Service Worker Target. Generates test logs and captures them in real-time.',
+      inputSchema: z.object({
+        targetId: z.string().describe('The Target ID of the service worker (from list_tabs)'),
+        executeTestLogs: z.boolean().optional().default(true).describe('Whether to execute test console.log statements to verify capture (default: true)'),
+        captureTimeMs: z.number().optional().default(3000).describe('How long to listen for logs in milliseconds (default: 3000)')
+      }),
+      handler: async ({ targetId, executeTestLogs = true, captureTimeMs = 3000 }: any) => {
+        // Connect directly to the specific target
+        const client = await connector.getTabClient(targetId);
+        const { Runtime, Log } = client;
+        
+        await Runtime.enable();
+        await Log.enable();
+        
+        // Collect logs from BOTH Runtime and Log domains for better coverage
+        const logs: Array<{time: string, source: string, type: string, message: string}> = [];
+        
+        // Listen to Runtime.consoleAPICalled (for console.log/warn/error)
+        client.on('Runtime.consoleAPICalled', (params: any) => {
+             try {
+                 const message = params.args.map((a:any) => {
+                     if (a.value !== undefined) return String(a.value);
+                     if (a.description) return a.description;
+                     if (a.preview?.properties) {
+                         return JSON.stringify(Object.fromEntries(
+                             a.preview.properties.map((p:any) => [p.name, p.value])
+                         ));
+                     }
+                     return '[Complex Object]';
+                 }).join(' ');
+                 
+                 logs.push({
+                     time: new Date().toISOString(),
+                     source: 'Runtime.consoleAPICalled',
+                     type: params.type || 'log',
+                     message
+                 });
+             } catch (e) {
+                 logs.push({
+                     time: new Date().toISOString(),
+                     source: 'Runtime.consoleAPICalled',
+                     type: 'error',
+                     message: `Failed to parse console args: ${e}`
+                 });
+             }
+        });
+        
+        // Listen to Log.entryAdded (alternative logging mechanism)
+        client.on('Log.entryAdded', (params: any) => {
+             logs.push({
+                 time: new Date(params.entry.timestamp).toISOString(),
+                 source: 'Log.entryAdded',
+                 type: params.entry.level || 'info',
+                 message: params.entry.text || params.entry.url || 'Unknown log'
+             });
+        });
+
+        // Get initial status
+        const evalResult = await Runtime.evaluate({
+            expression: `(function() {
+                return {
+                    userAgent: navigator.userAgent,
+                    time: new Date().toISOString(),
+                    location: self.location.href,
+                    serviceWorker: {
+                        state: self.serviceWorker ? self.serviceWorker.state : 'unknown'
+                    }
+                };
+            })()`,
+            returnByValue: true
+        });
+
+        // Execute test logs if requested (AFTER listeners are set up)
+        if (executeTestLogs) {
+            await Runtime.evaluate({
+                expression: `
+                    console.log('🔍 [MCP Test 1] Service Worker Log Capture Test');
+                    console.warn('⚠️ [MCP Test 2] Warning level test');
+                    console.error('❌ [MCP Test 3] Error level test');
+                    console.log('✅ [MCP Test 4] Capture timestamp:', new Date().toISOString());
+                `,
+                awaitPromise: false
+            });
+        }
+
+        // Wait to capture logs
+        await new Promise(r => setTimeout(r, captureTimeMs));
+        
+        return {
+          success: true,
+          targetId,
+          status: evalResult.result.value,
+          capturedLogs: logs.length > 0 ? logs : [],
+          summary: {
+              totalCaptured: logs.length,
+              byType: logs.reduce((acc: any, log) => {
+                  acc[log.type] = (acc[log.type] || 0) + 1;
+                  return acc;
+              }, {}),
+              bySource: logs.reduce((acc: any, log) => {
+                  acc[log.source] = (acc[log.source] || 0) + 1;
+                  return acc;
+              }, {})
+          },
+          note: logs.length === 0 ? 
+              "No logs captured. Service Worker extensions may have limited console.log emission via CDP. Try using Log.entryAdded or check Chrome DevTools directly." :
+              `Successfully captured ${logs.length} log entries`
+        };
+      }
+    },
+    
     // Get service worker details
     {
       name: 'get_service_worker',

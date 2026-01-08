@@ -1,9 +1,18 @@
 /**
  * Chrome Connection Manager
  * Handles connection to existing Chrome instance via CDP
+ * Now with Playwright support for launching browser
  */
 
 import CDP from 'chrome-remote-interface';
+import { chromium, type Browser, type BrowserContext } from 'playwright';
+import { spawn, type ChildProcess, exec } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 export interface ChromeConnection {
   client: any;
@@ -19,13 +28,262 @@ export interface TabInfo {
   description?: string;
 }
 
+export interface LaunchOptions {
+  headless?: boolean;
+  userDataDir?: string;
+  profileDirectory?: string;
+  executablePath?: string;
+}
+
 export class ChromeConnector {
   private connection: ChromeConnection | null = null;
   private port: number;
   private currentTabId: string | null = null;
+  private browserContext: BrowserContext | null = null;
+  private chromeProcess: ChildProcess | null = null;
 
   constructor(port: number = 9222) {
     this.port = port;
+  }
+
+  /**
+   * createShadowProfile: Clones essential parts of the profile to a temp dir
+   * to bypass Chrome's restriction on debugging the Default profile.
+   */
+  private async createShadowProfile(sourceUserData: string, profileName: string): Promise<string> {
+    const tempDir = path.join(os.tmpdir(), 'chrome-mcp-shadow');
+    
+    // Ensure parent dir exists
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    console.error(`👥 Creating Shadow Profile structure at: ${tempDir}`);
+    console.error(`   Source: ${sourceUserData}`);
+
+    // 1. Copy Local State (critical for encryption keys + profiles list)
+    // This MUST reside in the User Data Root
+    const localStateSrc = path.join(sourceUserData, 'Local State');
+    const localStateDest = path.join(tempDir, 'Local State');
+    try {
+        if (fs.existsSync(localStateSrc)) {
+            // Check if newer? Just overwrite for now to be safe
+            fs.copyFileSync(localStateSrc, localStateDest);
+        }
+    } catch (e) { console.error('Warning: could not copy Local State', e); }
+
+    // 2. Robocopy the profile folder
+    // We use robocopy for speed and easy exclusion
+    const profileSrc = path.join(sourceUserData, profileName);
+    const profileDest = path.join(tempDir, profileName);
+    
+    // Exclude heavy cache folders to makes launch fast
+    const xdirs = [
+        "Cache", 
+        "Code Cache", 
+        "GPUCache", 
+        "DawnCache", 
+        "ShaderCache",
+        "Safe Browsing",
+        "File System",
+        "Service Worker\\CacheStorage",
+        "Service Worker\\ScriptCache"
+    ];
+    
+    // Create params
+    const xdParams = xdirs.map(d => `"${d}"`).join(' ');
+    // /MIR = Mirror (copy recursive, delete extras)
+    // /XD = Exclude Directories
+    // /R:0 /W:0 = No retries (ignore locked files)
+    // /XJ = Exclude Junction points
+    // /MT:16 = Multi-threaded copy (fast)
+    const cmd = `robocopy "${profileSrc}" "${profileDest}" /MIR /XD ${xdParams} /R:0 /W:0 /XJ /MT:16`;
+    
+    try {
+        await execAsync(cmd);
+    } catch (e: any) {
+        // Robocopy exit codes: 0-7 are success/partial success. 8+ is failure.
+        // We expect code 1 (files copied) or 0 (no changes) or 2/3 (extra files detected)
+        if (e.code > 7) {
+            console.error('⚠️ Shadow Profile copy had errors (extensions might be missing):', e.message);
+        }
+    }
+    
+    return tempDir;
+  }
+
+  /**
+   * Launch Chrome manually using child_process to avoid blocking and argument issues
+   * This is more robust for persistent profiles than Playwright's launcher
+   */
+  async launchWithProfile(options: LaunchOptions = {}): Promise<void> {
+    // 1. Check connections
+    if (this.connection?.connected) {
+      console.error('✅ Already connected to a Chrome instance.');
+      return;
+    }
+
+    try {
+      // Check if port is open
+      await this.connect();
+      console.error(`✅ Detected and connected to existing Chrome on port ${this.port}`);
+      return;
+    } catch (e) {
+      // Port free, proceed
+    }
+    
+    let {
+      userDataDir,
+      profileDirectory = 'Default',
+      executablePath = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+    } = options;
+
+    const originalUserDataDir = userDataDir || `${process.env.LOCALAPPDATA}\\Google\\Chrome\\User Data`;
+    
+    // Default to the original unless shadowed
+    let finalUserDataDir = originalUserDataDir;
+
+    // 2. Handle Shadow Profile Logic
+    // If identifying as Default profile, we MUST clone it to avoid debug lock
+    // ONLY IF we are not already pointing to a custom dir (userDataDir was null/undefined originally)
+    if (profileDirectory === 'Default' && !userDataDir) {
+       try {
+           console.error("🔒 Default profile requested. Creating Shadow Copy to enable debugging...");
+           finalUserDataDir = await this.createShadowProfile(originalUserDataDir, profileDirectory);
+       } catch (err) {
+           console.error("❌ Failed to create shadow profile, attempting raw launch (may fail):", err);
+           finalUserDataDir = originalUserDataDir;
+       }
+    }
+
+    console.error(`🚀 Launching Chrome Native...`);
+    console.error(`   User Data: ${finalUserDataDir}`);
+    console.error(`   Profile: ${profileDirectory}`);
+
+    const args = [
+      `--remote-debugging-port=${this.port}`,
+      `--user-data-dir=${finalUserDataDir}`,
+      `--profile-directory=${profileDirectory}`,
+      '--remote-allow-origins=*',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-infobars',
+      '--exclude-switches=enable-automation',
+      '--use-mock-keychain',
+      '--password-store=basic'
+    ];
+    
+    console.error(`   Args: ${JSON.stringify(args)}`);
+
+    // Spawn completely detached process to prevent MCP hang
+    // Using 'pipe' for stderr to capture launch errors if any
+    this.chromeProcess = spawn(executablePath, args, {
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'], 
+      windowsHide: false
+    });
+
+    let startupLogs = '';
+    if (this.chromeProcess.stderr) {
+      this.chromeProcess.stderr.on('data', (data) => {
+        startupLogs += data.toString();
+        console.error(`Chrome Err: ${data.toString()}`);
+      });
+    }
+
+    const processExited = new Promise<never>((_, reject) => {
+      this.chromeProcess?.on('exit', (code) => {
+        if (code !== 0) {
+            reject(new Error(`Chrome process exited immediately with code ${code}. Logs: ${startupLogs}`));
+        }
+      });
+      this.chromeProcess?.on('error', (err) => {
+        reject(new Error(`Failed to spawn Chrome process: ${err.message}`));
+      });
+    });
+
+    // Race condition: wait for 3s OR for the process to exit
+    // Increased timeout to 5s for heavy profiles
+    const timeout = new Promise<void>(resolve => setTimeout(resolve, 5000));
+
+    // Wait for either timeout (success) or exit (failure)
+    try {
+        await Promise.race([timeout, processExited]);
+    } catch (e) {
+        this.chromeProcess = null;
+        throw e;
+    }
+
+    // If we got here, process didn't crash in the first 5 seconds
+    this.chromeProcess.unref(); 
+    if (this.chromeProcess.stderr) {
+        this.chromeProcess.stderr.destroy();
+    }
+
+    console.error(`✅ Chrome process spawned and stable (PID: ${this.chromeProcess.pid})`);
+    
+    // Connect to CDP with retries
+    let connected = false;
+    for (let i = 0; i < 5; i++) {
+        try {
+            await this.connect();
+            connected = true;
+            break;
+        } catch (e) {
+            console.error(`Starting CDP connection attempt ${i+1}/5 failed. Retrying...`);
+            await new Promise(r => setTimeout(r, 1000));
+        }
+    }
+    
+    if (!connected) {
+         throw new Error(`Chrome launched (PID ${this.chromeProcess.pid}) but port ${this.port} is not accessible after 10s. Logs: ${startupLogs}`);
+    }
+
+    // VERIFICATION: Check if we can actually list targets (proves browser is responsive)
+    try {
+      const targets = await this.listTabs();
+      console.error(`✅ Verification: Found ${targets.length} targets.`);
+      
+      if (targets.length === 0) {
+        console.error('⚠️ Warning: Browser running but no targets found.');
+      }
+    } catch (verErr) {
+       console.error('⚠️ Warning: Could not verify targets listing:', verErr);
+    }
+
+    // Optional: Try to attach Playwright over CDP for advanced features if needed
+    try {
+      const browser = await chromium.connectOverCDP(`http://localhost:${this.port}`);
+      // When connecting over CDP to a persistent profile, the default context is the first one
+      this.browserContext = browser.contexts()[0]; 
+      console.error('✅ Playwright wrapper connected over CDP');
+    } catch (pwError) {
+      console.error('⚠️ Could not attach Playwright wrapper (CDP still works):', (pwError as Error).message);
+    }
+  }
+
+  /**
+   * Disconnect from Chrome and close Playwright browser
+   */
+  async disconnect(): Promise<void> {
+    if (this.connection?.client) {
+      await this.connection.client.close();
+      this.connection = null;
+      console.error('Disconnected from Chrome CDP');
+    }
+    
+    if (this.browserContext) {
+      await this.browserContext.close();
+      this.browserContext = null;
+      console.error('Closed Playwright context');
+    }
+    
+    if (this.chromeProcess) {
+      // optional: kill process? usually we just disconnect
+      // this.chromeProcess.kill(); 
+      this.chromeProcess = null;
+    }
   }
 
   /**
@@ -52,15 +310,20 @@ export class ChromeConnector {
     }
   }
 
+
+  
   /**
-   * Disconnect from Chrome
+   * Get Playwright browser context
    */
-  async disconnect(): Promise<void> {
-    if (this.connection?.client) {
-      await this.connection.client.close();
-      this.connection = null;
-      console.error('Disconnected from Chrome');
-    }
+  getBrowserContext(): BrowserContext | null {
+    return this.browserContext;
+  }
+  
+  /**
+   * Check if browser was launched by Playwright
+   */
+  isPlaywrightManaged(): boolean {
+    return this.browserContext !== null;
   }
 
   /**
@@ -81,18 +344,20 @@ export class ChromeConnector {
   }
 
   /**
-   * List all open tabs
+   * List all open tabs and targets (including service workers)
    */
   async listTabs(): Promise<TabInfo[]> {
     try {
       const targets = await CDP.List({ port: this.port });
       
+      // Return interesting targets (pages, service workers, extensions)
+      // Removed strict 'page' filter to allow finding service workers as requested
       return targets
-        .filter((t: any) => t.type === 'page')
+        .filter((t: any) => t.type === 'page' || t.type === 'service_worker' || t.type === 'background_page' || t.type === 'other')
         .map((t: any) => ({
           id: t.id,
           type: t.type,
-          title: t.title,
+          title: t.title || t.url || 'Untitled', // Service workers might not have title
           url: t.url,
           description: t.description
         }));

@@ -20,6 +20,7 @@ import { createServiceWorkerTools } from './tools/service-worker.js';
 import { createCaptureTools } from './tools/capture.js';
 import { createSessionTools } from './tools/session.js';
 import { createSystemTools } from './tools/system.js';
+import { createPlaywrightLauncherTools } from './tools/playwright-launcher.js';
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -44,6 +45,7 @@ const server = new Server(
 
 // Collect all tools
 const allTools = [
+  ...createPlaywrightLauncherTools(connector),  // Playwright tools first (recommended)
   ...createNavigationTools(connector),
   ...createInteractionTools(connector),
   ...createAntiDetectionTools(connector),
@@ -132,23 +134,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Start server
 async function main() {
   console.error('🚀 Custom Chrome MCP Server starting...');
-  console.error(`📡 Connecting to Chrome on port ${PORT}`);
+  console.error(`📡 CDP Port: ${PORT}`);
+  console.error('');
+  console.error('🎭 Playwright Integration Active!');
+  console.error('   Use "launch_chrome_with_profile" to start Chrome with your profile');
+  console.error('   This keeps all cookies, sessions, and extensions intact');
+  console.error('');
   
   try {
-    // Connect to Chrome
-    await connector.connect();
-    
-    // Get Chrome version
-    const version = await connector.getVersion();
-    console.error(`✅ Connected to ${version['Browser']} (${version['User-Agent']})`);
-    
-    // List available tabs
-    const tabs = await connector.listTabs();
-    console.error(`📑 Found ${tabs.length} open tab(s)`);
-    
     console.error('🔧 Tools available:', allTools.length);
     console.error('');
     console.error('Tool categories:');
+    console.error('  - 🎭 Playwright Launcher (4 tools) - NEW!');
     console.error('  - Navigation & Tabs (8 tools)');
     console.error('  - Page Interaction (8 tools)');
     console.error('  - Anti-Detection (5 tools)');
@@ -157,7 +154,7 @@ async function main() {
     console.error('  - Session & Cookies (9 tools)');
     console.error('  - System & Extensions (4 tools)');
     console.error('');
-    console.error('✨ Server ready! Waiting for requests...');
+    console.error('✨ Server ready! Use launch_chrome_with_profile to start...');
     
     // Start MCP server with stdio transport
     const transport = new StdioServerTransport();
@@ -167,11 +164,9 @@ async function main() {
     const err = error as Error;
     console.error('❌ Failed to start server:', err.message);
     console.error('');
-    console.error('💡 Make sure Chrome is running with:');
-    console.error(`   chrome --remote-debugging-port=${PORT}`);
+    console.error('💡 Server started but not connected to Chrome.');
+    console.error('   Use "launch_chrome_with_profile" tool to start Chrome with Playwright');
     console.error('');
-    console.error('Or on Windows:');
-    console.error(`   start chrome --remote-debugging-port=${PORT}`);
     process.exit(1);
   }
 }
