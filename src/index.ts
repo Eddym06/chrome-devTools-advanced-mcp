@@ -58,18 +58,72 @@ const allTools = [
 // Create tool map for quick lookup
 const toolMap = new Map(allTools.map(tool => [tool.name, tool]));
 
+// Helper to convert Zod schema to JSON Schema property
+function zodTypeToJsonSchema(schema: any): any {
+  if (!schema) return { type: 'string' };
+  
+  let current = schema;
+  let isOptional = false;
+  
+  // Unwrap Optional/Default wrappers
+  while (current._def.typeName === 'ZodOptional' || current._def.typeName === 'ZodDefault') {
+    if (current._def.typeName === 'ZodOptional') isOptional = true;
+    current = current._def.innerType;
+  }
+  
+  const def = current._def;
+  let type = 'string'; // Default fallback
+  const jsonSchema: any = {};
+  
+  if (current.description) {
+    jsonSchema.description = current.description;
+  }
+  
+  switch (def.typeName) {
+    case 'ZodString':
+      type = 'string';
+      break;
+    case 'ZodNumber':
+      type = 'number';
+      break;
+    case 'ZodBoolean':
+      type = 'boolean';
+      break;
+    case 'ZodEnum':
+      type = 'string';
+      jsonSchema.enum = def.values;
+      break;
+  }
+  
+  jsonSchema.type = type;
+  return jsonSchema;
+}
+
 // Handle tool listing
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: allTools.map(tool => {
-      const shape: any = tool.inputSchema.shape;
+      // Cast to any to access Zod shape
+      const shape: any = (tool.inputSchema as any).shape;
       const properties: any = {};
       const required: string[] = [];
       
-      for (const key in shape) {
-        properties[key] = shape[key];
-        if (!shape[key].isOptional || !shape[key].isOptional()) {
-          required.push(key);
+      if (shape) {
+        for (const key in shape) {
+          const zodSchema = shape[key];
+          properties[key] = zodTypeToJsonSchema(zodSchema);
+          
+          // Check if required
+          let isOptional = false;
+          let current = zodSchema;
+          while (current._def.typeName === 'ZodOptional' || current._def.typeName === 'ZodDefault') {
+             if (current._def.typeName === 'ZodOptional') isOptional = true;
+             current = current._def.innerType;
+          }
+          
+          if (!isOptional) {
+            required.push(key);
+          }
         }
       }
       

@@ -1,6 +1,6 @@
 {
   "name": "@eddym06/custom-chrome-mcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Cross-platform Chrome MCP with enhanced features: connect to existing Chrome, anti-detection, service workers, session management, Shadow Profile system, and more. Works on Windows, Mac, and Linux.",
   "main": "dist/index.js",
   "bin": {
