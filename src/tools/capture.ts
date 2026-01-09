@@ -10,7 +10,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Take screenshot
     {
       name: 'screenshot',
-      description: 'Captures visual screenshot of webpage - full page or specific area, PNG or JPEG format. Use for visual testing, documentation, monitoring UI changes, capturing proof/evidence, creating thumbnails, analyzing page layouts, or automated visual QA.',
+      description: '📸 Visual page analysis tool - captures PNG/JPEG screenshots. WHEN TO USE: 1️⃣ BEFORE interactions - analyze page layout visually to find buttons/forms. 2️⃣ AFTER actions - verify results visually. 3️⃣ When HTML is too complex to parse. 4️⃣ Visual debugging of UI issues. WORKFLOW: navigate → screenshot → analyze visually → identify elements → interact. Use for: visual testing, documentation, monitoring UI, capturing proof, creating thumbnails.',
       inputSchema: z.object({
         format: z.enum(['png', 'jpeg']).default('png').describe('Image format'),
         quality: z.number().min(0).max(100).default(90).describe('JPEG quality (0-100)'),
@@ -68,7 +68,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Get page HTML
     {
       name: 'get_html',
-      description: 'Extracts complete HTML source code from current page - gets raw HTML structure including dynamic content loaded by JavaScript. Use for web scraping, content analysis, SEO auditing, archiving pages, extracting data, analyzing page structure, or saving rendered content.',
+      description: '🔍 CRITICAL ANALYSIS TOOL - extracts complete HTML source code. ⚠️ USE THIS FIRST BEFORE ANY INTERACTION! PROPER WORKFLOW: 1️⃣ navigate → 2️⃣ get_html (analyze structure) → 3️⃣ identify selectors from HTML (buttons: button.submit, inputs: input#email, links: a.nav-link) → 4️⃣ THEN click/type with verified selectors. NEVER guess selectors! Get HTML returns: element IDs, classes, button text, input names, form structure, links. Essential for: web scraping, finding correct selectors, analyzing page structure.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)'),
         outerHTML: z.boolean().default(true).describe('Get outer HTML (includes <html> tag)')

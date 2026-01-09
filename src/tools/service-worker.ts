@@ -11,7 +11,7 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
     // List all service workers
     {
       name: 'list_service_workers',
-      description: 'Lists all registered Service Workers on the page - shows scripts running in background for PWAs (Progressive Web Apps), offline caching, push notifications, background sync. Use for debugging PWAs, inspecting offline capabilities, monitoring background processes, or analyzing web app architecture.',
+      description: '📋 Lists Service Workers (background scripts for extensions/PWAs). EXTENSION DEBUGGING WORKFLOW: 1️⃣ list_service_workers to find extension SW → 2️⃣ get SW targetId → 3️⃣ connect_to_target with that ID → 4️⃣ execute_in_target to run code in extension context → 5️⃣ inspect_service_worker_logs for debugging. Use for: debugging extensions, PWA offline capabilities, push notifications, background sync.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -53,7 +53,7 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
     // Inspect service worker console logs
     {
       name: 'inspect_service_worker_logs',
-      description: 'Captures console logs from a Service Worker in real-time - shows background debugging messages, sync events, cache operations, push notifications. Use for debugging PWA background behavior, monitoring offline sync, troubleshooting service worker issues, or understanding background processes.',
+      description: '🔍 Captures console logs from Service Worker (extension debugging). WORKFLOW: 1️⃣ list_service_workers → 2️⃣ get targetId → 3️⃣ inspect_service_worker_logs with that targetId → 4️⃣ see real-time console output from extension/PWA background script. Use for: debugging extension background scripts, monitoring PWA sync events, troubleshooting cache operations, viewing push notification logs.',
       inputSchema: z.object({
         targetId: z.string().describe('The Target ID of the service worker (from list_tabs)'),
         executeTestLogs: z.boolean().default(true).describe('Whether to execute test console.log statements to verify capture (default: true)'),

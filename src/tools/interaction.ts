@@ -11,7 +11,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Click element
     {
       name: 'click',
-      description: 'Click/press/tap on any element (button, link, checkbox, etc.) on the page using CSS selector. Use this when user says "click the button", "press the submit button", "tap on the link", etc. Supports any clickable element.',
+      description: '⚠️ CRITICAL WORKFLOW: BEFORE clicking, ALWAYS use get_html or screenshot FIRST to analyze page and identify correct selectors. NEVER guess selectors blindly. | Click/press/tap on any element (button, link, checkbox, etc.) using CSS selector. PROPER WORKFLOW: 1️⃣ navigate to page → 2️⃣ get_html to see available elements → 3️⃣ identify correct CSS selector from HTML → 4️⃣ THEN click with verified selector. Use when user says "click button", "press submit", "tap link".',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of element to click'),
         tabId: z.string().optional().describe('Tab ID (optional)'),
@@ -69,7 +69,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Type text
     {
       name: 'type',
-      description: 'Type/write/enter text into any input field, textbox, search box, or textarea. Use when user says "type in the search box", "enter text", "write in the field", "fill the form", etc.',
+      description: '⚠️ PREREQUISITE: Use get_html FIRST to identify input field selectors. | Type/write/enter text into input fields, textboxes, search boxes, textareas. PROPER WORKFLOW: 1️⃣ get_html to find input elements → 2️⃣ identify selector (input#email, textarea.message) → 3️⃣ type text → 4️⃣ optionally press Enter. Use when user says "type in search box", "enter text", "write in field", "fill form".',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of input element'),
         text: z.string().describe('Text to type'),
@@ -193,7 +193,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Execute JavaScript
     {
       name: 'execute_script',
-      description: 'Executes arbitrary JavaScript code in page context - run custom logic, manipulate DOM, call page functions, extract complex data, modify page behavior. Use for advanced scraping, complex interactions, data extraction, testing JavaScript functions, or custom page manipulation. NOTE: Use Page ID, not Service Worker ID.',
+      description: 'Executes JavaScript code in page context. BEST PRACTICES: 1️⃣ Prefer get_html/click/type when possible (simpler & safer). 2️⃣ Use execute_script ONLY for: complex queries (querySelectorAll with map/filter), accessing window variables/functions, triggering custom events, advanced DOM manipulation. 3️⃣ ALWAYS use "return" statement to get results. EXAMPLES: return Array.from(document.querySelectorAll(".item")).map(e => e.textContent); | return window.appConfig; | Advanced scraping, data extraction, complex interactions.',
       inputSchema: z.object({
         script: z.string().describe('JavaScript code to execute'),
         tabId: z.string().optional().describe('Tab ID (optional) - MUST be a Page/Tab ID, not a Service Worker ID'),

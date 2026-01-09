@@ -12,7 +12,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // List all Chrome targets (including extension service workers)
     {
       name: 'list_all_targets',
-      description: 'Lists all Chrome execution contexts - pages, tabs, iframes, extension service workers, background pages, web workers. Use for discovering active extensions, finding service workers to debug, analyzing page structure, inspecting iframes, monitoring all browser processes, or getting target IDs for debugging.',
+      description: '🎯 Lists ALL Chrome execution contexts - pages, extensions, service workers, iframes, web workers. EXTENSION WORKFLOW: 1️⃣ list_all_targets (filter: service_worker) → 2️⃣ find your extension by title/url → 3️⃣ get its targetId → 4️⃣ connect_to_target → 5️⃣ execute_in_target to run code in extension. Use for: discovering extensions, finding SWs to debug, analyzing page structure, monitoring browser processes.',
       inputSchema: z.object({
         filterType: z.enum(['all', 'service_worker', 'background_page', 'page', 'iframe', 'worker']).optional().describe('Filter by target type')
       }),
@@ -94,7 +94,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // Connect to a specific target (like extension service worker)
     {
       name: 'connect_to_target',
-      description: 'Connects directly to any Chrome target by ID - allows debugging extension service workers, background pages, iframes, or specific execution contexts. Use for inspecting extension internals, debugging background scripts, analyzing isolated contexts, or direct communication with specific targets.',
+      description: '🔌 Connects to specific Chrome target (extension SW, iframe, etc.). WORKFLOW: 1️⃣ list_all_targets to get targetId → 2️⃣ connect_to_target with that ID → 3️⃣ now you can execute_in_target to run code in that context. CRITICAL: After connecting, use execute_in_target (NOT execute_script) to run code. Use for: extension debugging, iframe inspection, background script access.',
       inputSchema: z.object({
         targetId: z.string().describe('Target ID to connect to')
       }),

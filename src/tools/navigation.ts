@@ -11,7 +11,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Navigate to URL
     {
       name: 'navigate',
-      description: 'Navigate to any URL (website/page). Opens and loads the specified URL in the browser. Use this to go to websites like apple.com, google.com, etc. Example: "navigate to apple.com" or "go to https://example.com"',
+      description: 'Opens and navigates to any URL/website in browser (apple.com, google.com, etc.). USE THIS WHEN: user says "go to", "open", "navigate to", "visit", "load page", "browse to" any website. Handles http://, https://, or plain domain names. 📋 PROPER WORKFLOW: 1️⃣ navigate to URL → 2️⃣ wait_for_load_state (networkidle) → 3️⃣ get_html or screenshot to analyze page → 4️⃣ THEN interact.',
       inputSchema: z.object({
         url: z.string().describe('URL to navigate to'),
         tabId: z.string().optional().describe('Tab ID (optional, uses current tab if not specified)'),
@@ -169,7 +169,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Create new tab
     {
       name: 'create_tab',
-      description: 'Create a new tab',
+      description: 'Opens a new browser tab/page, optionally with specified URL. USE THIS WHEN: user wants new tab, open in new window, create new page, or open multiple pages simultaneously.',
       inputSchema: z.object({
         url: z.string().optional().describe('URL to open in new tab (optional)')
       }),
