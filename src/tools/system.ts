@@ -12,7 +12,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // List all Chrome targets (including extension service workers)
     {
       name: 'list_all_targets',
-      description: 'Discover all Chrome targets (pages, iframes, workers, extension backgrounds/service workers) for deep inspection and debugging.',
+      description: 'Lists all Chrome execution contexts - pages, tabs, iframes, extension service workers, background pages, web workers. Use for discovering active extensions, finding service workers to debug, analyzing page structure, inspecting iframes, monitoring all browser processes, or getting target IDs for debugging.',
       inputSchema: z.object({
         filterType: z.enum(['all', 'service_worker', 'background_page', 'page', 'iframe', 'worker']).optional().describe('Filter by target type')
       }),
@@ -94,7 +94,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // Connect to a specific target (like extension service worker)
     {
       name: 'connect_to_target',
-      description: 'Connect to a specific Chrome target by ID (useful for extension service workers)',
+      description: 'Connects directly to any Chrome target by ID - allows debugging extension service workers, background pages, iframes, or specific execution contexts. Use for inspecting extension internals, debugging background scripts, analyzing isolated contexts, or direct communication with specific targets.',
       inputSchema: z.object({
         targetId: z.string().describe('Target ID to connect to')
       }),

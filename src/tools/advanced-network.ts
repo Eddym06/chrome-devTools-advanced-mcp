@@ -872,7 +872,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'disable_websocket_interception',
-      description: 'Disable WebSocket interception',
+      description: 'Stops WebSocket message capturing - ends monitoring of WebSocket connections and message flow. Use when done analyzing WebSocket traffic, to clean up listeners, or to stop real-time message capture.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -895,7 +895,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'start_har_recording',
-      description: 'Start recording/capturing ALL network traffic in HAR format (HTTP Archive). MUST be called BEFORE navigating/actions to capture traffic. Use when user says "record the traffic", "start capturing network", "save HAR file". After recording, use stop_har_recording and export_har_file to save the data.',
+      description: 'Records all network traffic in HAR format (HTTP Archive) - captures requests, responses, timings, headers, cookies. Use for performance analysis, debugging network issues, archiving traffic, analyzing API calls, creating test fixtures, or documenting network behavior. Combine with stop_har_recording and export_har_file.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -1022,7 +1022,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'export_har_file',
-      description: 'Export/save HAR recording to a file. REQUIRES: Must call start_har_recording first, then do actions, then stop_har_recording, and finally call this to save. Use when user says "save the HAR", "export the recording", "save network traffic to file".',
+      description: 'Saves HAR recording to file - exports captured network traffic as JSON file for analysis, sharing, or replay. Use for saving performance data, archiving network sessions, creating test data, sharing debug info, or analyzing traffic offline. Works with stopped HAR recordings.',
       inputSchema: z.object({
         filename: z.string().describe('Filename to save HAR (e.g., recording.har)'),
         outputDir: z.string().optional().describe('Output directory (default: current directory)'),
@@ -1264,7 +1264,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'inject_css_global',
-      description: 'Inject CSS into ALL pages automatically (persists across navigation)',
+      description: 'Injects persistent CSS into all pages - applies custom styling, hides elements, modifies layouts, creates dark mode, removes ads, fixes design issues. Survives navigation and applies to new pages automatically. Use for visual modifications, UI customization, accessibility improvements, hiding distractions, or creating custom themes.',
       inputSchema: z.object({
         css: z.string().describe('CSS code to inject'),
         name: z.string().optional().describe('Name for this injection (for reference)'),
@@ -1357,7 +1357,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'inject_js_global',
-      description: 'Inject JavaScript into ALL pages automatically (runs before any page script)',
+      description: 'Injects persistent JavaScript into all pages - runs before page scripts, intercepts functions, adds global utilities, modifies page behavior, hooks into APIs, captures events. Persists across navigation. Use for advanced scraping, function interception, API hooking, adding custom functionality, debugging, monitoring events, or automating complex interactions.',
       inputSchema: z.object({
         javascript: z.string().describe('JavaScript code to inject'),
         name: z.string().optional().describe('Name for this injection (for reference)'),

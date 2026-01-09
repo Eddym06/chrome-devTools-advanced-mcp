@@ -11,7 +11,7 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
     // List all service workers
     {
       name: 'list_service_workers',
-      description: 'List registered service workers (PWA/background) with scope and state details for debugging offline/background behavior.',
+      description: 'Lists all registered Service Workers on the page - shows scripts running in background for PWAs (Progressive Web Apps), offline caching, push notifications, background sync. Use for debugging PWAs, inspecting offline capabilities, monitoring background processes, or analyzing web app architecture.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -53,7 +53,7 @@ export function createServiceWorkerTools(connector: ChromeConnector) {
     // Inspect service worker console logs
     {
       name: 'inspect_service_worker_logs',
-      description: 'Capture recent console logs from a specific service worker target (PWA/background). Useful to debug caching, sync, push, or background logic.',
+      description: 'Captures console logs from a Service Worker in real-time - shows background debugging messages, sync events, cache operations, push notifications. Use for debugging PWA background behavior, monitoring offline sync, troubleshooting service worker issues, or understanding background processes.',
       inputSchema: z.object({
         targetId: z.string().describe('The Target ID of the service worker (from list_tabs)'),
         executeTestLogs: z.boolean().default(true).describe('Whether to execute test console.log statements to verify capture (default: true)'),

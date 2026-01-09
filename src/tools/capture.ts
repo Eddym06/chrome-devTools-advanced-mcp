@@ -10,7 +10,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Take screenshot
     {
       name: 'screenshot',
-      description: 'Capture a screenshot of the page (full or region) for visual inspection, debugging, or reporting.',
+      description: 'Captures visual screenshot of webpage - full page or specific area, PNG or JPEG format. Use for visual testing, documentation, monitoring UI changes, capturing proof/evidence, creating thumbnails, analyzing page layouts, or automated visual QA.',
       inputSchema: z.object({
         format: z.enum(['png', 'jpeg']).default('png').describe('Image format'),
         quality: z.number().min(0).max(100).default(90).describe('JPEG quality (0-100)'),
@@ -68,7 +68,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Get page HTML
     {
       name: 'get_html',
-      description: 'Retrieve the HTML markup of the current page (outer or inner) for scraping, assertions, or audits.',
+      description: 'Extracts complete HTML source code from current page - gets raw HTML structure including dynamic content loaded by JavaScript. Use for web scraping, content analysis, SEO auditing, archiving pages, extracting data, analyzing page structure, or saving rendered content.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)'),
         outerHTML: z.boolean().default(true).describe('Get outer HTML (includes <html> tag)')

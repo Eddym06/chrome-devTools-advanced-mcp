@@ -11,7 +11,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Apply stealth mode
     {
       name: 'enable_stealth_mode',
-      description: 'Reduce automation fingerprints so the page looks like a real user (navigator, plugins, permissions tweaks). Can run at any time and affects the current tab only.',
+      description: 'Makes browser automation undetectable - hides webdriver flag, spoofs plugins, adds realistic browser properties. Use for bypassing bot detection, accessing protected sites, web scraping, automated testing without triggering anti-bot systems. Works on current and future pages.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -129,7 +129,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Randomize user agent
     {
       name: 'set_user_agent',
-      description: 'Set a custom user agent string',
+      description: 'Changes browser user agent string - allows impersonating different browsers, devices (mobile/desktop), or operating systems. Use for testing responsive designs, bypassing device restrictions, accessing mobile/desktop-only content, or appearing as different browser types.',
       inputSchema: z.object({
         userAgent: z.string().optional().describe('Custom user agent (optional, uses realistic default if not provided)'),
         tabId: z.string().optional().describe('Tab ID (optional)')

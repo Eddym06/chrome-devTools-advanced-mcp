@@ -10,7 +10,7 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
   return [
     {
       name: 'launch_chrome_with_profile',
-      description: 'Start the browser with your existing profile (cookies, sessions, extensions) via Playwright. Recommended first step before using other tools.',
+      description: 'Launch Chrome using Playwright with your user profile (keeps cookies, sessions, extensions). This is the recommended way to start Chrome.',
       inputSchema: z.object({
         profileDirectory: z.string().default('Default').describe('Profile directory name: "Default", "Profile 1", "Profile 2", etc.'),
         userDataDir: z.string().optional().describe('Full path to Chrome User Data directory. Leave empty for default location.')

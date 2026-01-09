@@ -121,7 +121,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Get text content
     {
       name: 'get_text',
-      description: 'Get text content from an element',
+      description: 'Extracts visible text content from any element - gets rendered text from headings, paragraphs, divs, buttons, etc. Use for web scraping, content extraction, reading page text, analyzing text content, verifying displayed text, or extracting data from pages.',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of element'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -158,7 +158,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Get attribute
     {
       name: 'get_attribute',
-      description: 'Get attribute value from an element',
+      description: 'Retrieves any HTML attribute value from elements - gets href from links, src from images, data attributes, IDs, classes, etc. Use for extracting URLs, analyzing page structure, getting metadata, scraping attribute data, or inspecting element properties.',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of element'),
         attribute: z.string().describe('Attribute name to get'),
@@ -193,7 +193,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Execute JavaScript
     {
       name: 'execute_script',
-      description: 'Execute JavaScript code in the PAGE context. IMPORTANT: Do NOT use a Service Worker ID as tabId. Only use the main Tab/Page ID. If you need to debug a Service Worker, use inspect_service_worker_logs.',
+      description: 'Executes arbitrary JavaScript code in page context - run custom logic, manipulate DOM, call page functions, extract complex data, modify page behavior. Use for advanced scraping, complex interactions, data extraction, testing JavaScript functions, or custom page manipulation. NOTE: Use Page ID, not Service Worker ID.',
       inputSchema: z.object({
         script: z.string().describe('JavaScript code to execute'),
         tabId: z.string().optional().describe('Tab ID (optional) - MUST be a Page/Tab ID, not a Service Worker ID'),
@@ -227,7 +227,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Scroll
     {
       name: 'scroll',
-      description: 'Scroll the page or an element',
+      description: 'Scrolls webpage or specific element to position - triggers lazy-loading content, reveals hidden elements, loads infinite scroll content. Use for loading dynamic content, capturing full-page screenshots, accessing bottom sections, triggering scroll events, or navigating long pages.',
       inputSchema: z.object({
         x: z.number().default(0).describe('Horizontal scroll position'),
         y: z.number().optional().describe('Vertical scroll position'),

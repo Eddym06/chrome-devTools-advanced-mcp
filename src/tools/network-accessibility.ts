@@ -14,7 +14,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Enable network interception
     {
       name: 'enable_network_interception',
-      description: 'Enable request interception to observe/modify/block network requests in real time. Accepts URL patterns (e.g., *.js, *.css, *api*) and keeps listening until disabled.',
+      description: 'Enables network request interception - pauses requests before they complete allowing modification of URLs, headers, methods, or blocking. Use for testing APIs, manipulating requests, debugging network issues, blocking resources, modifying traffic, or analyzing request patterns. Filters by URL patterns.',
       inputSchema: z.object({
         patterns: z.array(z.string()).default(['*']).describe('URL patterns to intercept (e.g., ["*.js", "*.css", "*api*"]). Use "*" for all requests.'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -58,7 +58,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // List intercepted requests
     {
       name: 'list_intercepted_requests',
-      description: 'List all currently intercepted network requests that are waiting for action (continue, modify, or fail)',
+      description: 'Shows all paused/intercepted network requests waiting for action - displays URLs, methods, headers, resource types. Use for seeing what traffic was caught, analyzing request patterns, deciding what to modify/block, or understanding network activity.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -95,7 +95,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Modify and continue intercepted request
     {
       name: 'modify_intercepted_request',
-      description: 'Modify an intercepted request (headers, URL, method, body) and continue it. Get requestId from list_intercepted_requests.',
+      description: 'Modifies paused request before sending - change URL, headers, method, or POST body. Use for testing API variations, injecting auth tokens, redirecting requests, changing request data, or simulating different request scenarios.',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from list_intercepted_requests'),
         modifiedUrl: z.string().optional().describe('New URL to request'),
