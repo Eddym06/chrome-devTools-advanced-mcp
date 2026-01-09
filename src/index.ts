@@ -257,7 +257,27 @@ async function main() {
     console.error('  - Session & Cookies (9 tools)');
     console.error('  - System & Extensions (4 tools)');
     console.error('');
-    console.error('✨ Server ready! Use launch_chrome_with_profile to start...');
+    console.error('✨ Server ready!');
+    console.error('');
+    
+    // Auto-launch Chrome on startup
+    console.error('🚀 Auto-launching Chrome with Default profile...');
+    try {
+      const launchTool = allTools.find(t => t.name === 'launch_chrome_with_profile');
+      if (launchTool?.handler) {
+        const launchPromise = launchTool.handler({ profileDirectory: 'Default' });
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Launch timeout after 15s')), 15000)
+        );
+        
+        await Promise.race([launchPromise, timeoutPromise]);
+        console.error('✅ Chrome launched successfully!');
+      }
+    } catch (error) {
+      console.error('⚠️ Auto-launch failed:', (error as Error).message);
+      console.error('   You can manually use "launch_chrome_with_profile" tool later');
+    }
+    console.error('');
     
     // Start MCP server with stdio transport
     const transport = new StdioServerTransport();
