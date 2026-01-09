@@ -11,7 +11,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Click element
     {
       name: 'click',
-      description: 'Click on an element using CSS selector',
+      description: 'Click/press/tap on any element (button, link, checkbox, etc.) on the page using CSS selector. Use this when user says "click the button", "press the submit button", "tap on the link", etc. Supports any clickable element.',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of element to click'),
         tabId: z.string().optional().describe('Tab ID (optional)'),
@@ -69,7 +69,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Type text
     {
       name: 'type',
-      description: 'Type text into an input element',
+      description: 'Type/write/enter text into any input field, textbox, search box, or textarea. Use when user says "type in the search box", "enter text", "write in the field", "fill the form", etc.',
       inputSchema: z.object({
         selector: z.string().describe('CSS selector of input element'),
         text: z.string().describe('Text to type'),

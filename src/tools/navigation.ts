@@ -11,7 +11,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Navigate to URL
     {
       name: 'navigate',
-      description: 'Navigate to a URL in the current or specified tab',
+      description: 'Navigate to any URL (website/page). Opens and loads the specified URL in the browser. Use this to go to websites like apple.com, google.com, etc. Example: "navigate to apple.com" or "go to https://example.com"',
       inputSchema: z.object({
         url: z.string().describe('URL to navigate to'),
         tabId: z.string().optional().describe('Tab ID (optional, uses current tab if not specified)'),
@@ -72,7 +72,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Go back
     {
       name: 'go_back',
-      description: 'Navigate back in browser history',
+      description: 'Go back in browser history - same as pressing the back button. Use when user says "go back", "navigate back", "return to previous page", "press back button".',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),

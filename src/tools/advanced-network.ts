@@ -53,7 +53,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
     
     {
       name: 'enable_response_interception',
-      description: 'Enable interception of network RESPONSES (not just requests). Allows modifying response body, headers, and status code before they reach the browser.',
+      description: 'Enable network traffic interception - captures/intercepts ALL network responses (API calls, requests, HTTP traffic). Use when user says "intercept traffic", "capture network requests", "monitor API calls", "see what packets are sent". Stays active until disabled. After enabling, use list_intercepted_responses to see captured traffic.',
       inputSchema: z.object({
         patterns: z.array(z.string()).default(['*']).describe('URL patterns to intercept'),
         resourceTypes: z.array(z.string()).optional().describe('Resource types to intercept (Document, Script, XHR, Fetch, etc.)'),
@@ -140,7 +140,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'list_intercepted_responses',
-      description: 'List all currently intercepted responses waiting for action',
+      description: 'List/show ALL captured network traffic, intercepted requests, API calls, and HTTP responses. Use after enabling interception to see what packets were captured. Shows URLs, methods, status codes, and headers. Use when user asks "what traffic was intercepted", "show me the requests", "list captured packets", "what API calls were made".',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -197,7 +197,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'modify_intercepted_response',
-      description: 'Modify an intercepted response (body, headers, status code) and continue',
+      description: 'Modify/change/edit a captured network response before it reaches the browser. Change response body (JSON data), headers, or status code. Then send the modified packet to the page. Use when user says "modify the response", "change the API data", "edit the packet", "send modified data to page".',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from list_intercepted_responses'),
         modifiedBody: z.string().optional().describe('New response body (base64 if binary)'),
@@ -322,7 +322,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'create_mock_endpoint',
-      description: 'Create a mock endpoint that intercepts requests and responds with fake data without hitting real server',
+      description: 'Create fake/mock API endpoint - intercepts requests to a URL and responds with fake data (without hitting real server). Use for testing, simulating APIs, or replacing real responses. Use when user says "mock the API", "fake the response", "simulate API call", "respond with fake data".',
       inputSchema: z.object({
         urlPattern: z.string().describe('URL pattern to mock (supports * wildcards)'),
         responseBody: z.string().describe('Response body (JSON string, HTML, etc.)'),
