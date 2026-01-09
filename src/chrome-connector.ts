@@ -41,6 +41,7 @@ export class ChromeConnector {
   private currentTabId: string | null = null;
   private browserContext: BrowserContext | null = null;
   private chromeProcess: ChildProcess | null = null;
+  private persistentClients: Map<string, any> = new Map(); // Persistent clients for interceptors
 
   constructor(port: number = 9222) {
     this.port = port;
@@ -742,6 +743,58 @@ export class ChromeConnector {
    */
   getCurrentTabId(): string | null {
     return this.currentTabId;
+  }
+
+  /**
+   * Get or create a persistent client for interceptors
+   * These clients stay alive for the entire session
+   */
+  async getPersistentClient(tabId?: string): Promise<any> {
+    const effectiveTabId = tabId || 'default';
+    
+    // Return existing persistent client if available
+    if (this.persistentClients.has(effectiveTabId)) {
+      return this.persistentClients.get(effectiveTabId);
+    }
+    
+    // Create new persistent client using same logic as getTabClient
+    const target = tabId || this.currentTabId;
+    
+    let targetId = target;
+    if (!targetId) {
+      const tabs = await this.listTabs();
+      if (tabs.length === 0) {
+        throw new Error('No open tabs available');
+      }
+      targetId = tabs[0].id;
+    }
+    
+    const client = await CDP({ port: this.port, target: targetId });
+    
+    // Store it persistently
+    this.persistentClients.set(effectiveTabId, client);
+    
+    console.error(`[Persistent Client] Created for tab: ${effectiveTabId}`);
+    
+    return client;
+  }
+
+  /**
+   * Close persistent client (used when disabling interceptors)
+   */
+  async closePersistentClient(tabId?: string): Promise<void> {
+    const effectiveTabId = tabId || 'default';
+    
+    if (this.persistentClients.has(effectiveTabId)) {
+      const client = this.persistentClients.get(effectiveTabId);
+      try {
+        await client.close();
+      } catch (e) {
+        console.error(`[Persistent Client] Error closing client:`, e);
+      }
+      this.persistentClients.delete(effectiveTabId);
+      console.error(`[Persistent Client] Closed for tab: ${effectiveTabId}`);
+    }
   }
 
   /**

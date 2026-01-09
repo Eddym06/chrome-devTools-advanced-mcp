@@ -68,10 +68,11 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
             'Connection verification timeout'
           );
           
+          // Use PERSISTENT client so listeners stay active
           const client = await withTimeout(
-            connector.getTabClient(tabId),
+            connector.getPersistentClient(tabId),
             Math.min(timeoutMs, 5000),
-            'Failed to get tab client'
+            'Failed to get persistent tab client'
           );
           
           const { Network, Fetch } = client;
@@ -104,22 +105,27 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
             interceptedResponses.set(effectiveTabId, new Map());
           }
           
+          // Register listener on persistent client - stays active!
           Fetch.requestPaused((params: any) => {
             try {
               const responses = interceptedResponses.get(effectiveTabId);
               if (responses) {
                 responses.set(params.requestId, params);
+                console.error(`[Response Interceptor] Captured: ${params.request?.url}`);
               }
             } catch (e) {
               console.error('[Response Interception] Error storing intercepted response:', e);
             }
           });
           
+          console.error(`✅ Response interceptor ACTIVE and listening for patterns: ${patterns.join(', ')}`);
+          
           return {
             success: true,
-            message: `Response interception enabled for patterns: ${patterns.join(', ')}`,
+            message: `Response interception enabled and LISTENING for patterns: ${patterns.join(', ')}`,
             patterns,
-            stage: 'Response'
+            stage: 'Response',
+            note: 'Interceptor is now ACTIVE and will continue capturing responses until disabled'
           };
         } catch (error: any) {
           return {
@@ -262,31 +268,44 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'disable_response_interception',
-      description: 'Disable response interception',
+      description: 'Disable response interception and close persistent listener',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
       handler: async ({ tabId }: any) => {
         try {
           await withTimeout(connector.verifyConnection(), 3000, 'Connection timeout');
-          const client = await withTimeout(connector.getTabClient(tabId), 3000, 'Get client timeout');
+          
+          // Get persistent client
+          const client = await connector.getPersistentClient(tabId);
           const { Fetch } = client;
           
           if (Fetch) {
             await withTimeout(Fetch.disable(), 3000, 'Fetch.disable timeout');
           }
           
+          // Close persistent client to clean up listeners
+          await connector.closePersistentClient(tabId);
+          
           const effectiveTabId = tabId || 'default';
           interceptedResponses.delete(effectiveTabId);
           
+          console.error(`✅ Response interceptor STOPPED for tab: ${effectiveTabId}`);
+          
           return {
             success: true,
-            message: 'Response interception disabled'
+            message: 'Response interception disabled and listener closed'
           };
         } catch (error: any) {
           // Even if disable fails, clean up local state
           const effectiveTabId = tabId || 'default';
           interceptedResponses.delete(effectiveTabId);
+          
+          try {
+            await connector.closePersistentClient(tabId);
+          } catch (e) {
+            // ignore
+          }
           
           return {
             success: true,
@@ -332,7 +351,14 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
           }
           
           await withTimeout(connector.verifyConnection(), 5000, 'Connection timeout');
-          const client = await withTimeout(connector.getTabClient(tabId), 5000, 'Get client timeout');
+          
+          // Use PERSISTENT client
+          const client = await withTimeout(
+            connector.getPersistentClient(tabId),
+            5000,
+            'Get persistent client timeout'
+          );
+          
           const { Network, Fetch } = client;
           
           if (!Network || !Fetch) {
@@ -365,6 +391,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
           
           mockEndpoints.get(effectiveTabId)!.push(mock);
           
+          // Register listener on persistent client
           Fetch.requestPaused(async (params: any) => {
             try {
               const url = params.request.url;
@@ -383,6 +410,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
               
               if (matchingMock) {
                 matchingMock.callCount++;
+                console.error(`[Mock Endpoint] Intercepted ${requestMethod} ${url} -> Responding with mock data`);
                 
                 if (matchingMock.latency > 0) {
                   await new Promise(resolve => setTimeout(resolve, matchingMock.latency));
@@ -420,15 +448,18 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
             }
           });
           
+          console.error(`✅ Mock endpoint ACTIVE for pattern: ${urlPattern}`);
+          
           return {
             success: true,
-            message: `Mock endpoint created for ${urlPattern}`,
+            message: `Mock endpoint created and LISTENING for ${urlPattern}`,
             mock: {
               urlPattern,
               statusCode,
               latency,
               method: method || 'any'
-            }
+            },
+            note: 'Mock is now ACTIVE and will intercept matching requests until cleared'
           };
         } catch (error: any) {
           return {
@@ -496,7 +527,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'clear_all_mocks',
-      description: 'Clear all mock endpoints',
+      description: 'Clear all mock endpoints and close persistent listeners',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -506,9 +537,17 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
         const count = mockEndpoints.get(effectiveTabId)?.length || 0;
         mockEndpoints.delete(effectiveTabId);
         
+        // Close persistent client
+        try {
+          await connector.closePersistentClient(tabId);
+          console.error(`✅ Mock endpoints CLEARED and listener closed`);
+        } catch (e) {
+          console.error('⚠️ Error closing persistent client:', e);
+        }
+        
         return {
           success: true,
-          message: `Cleared ${count} mock endpoint(s)`
+          message: `Cleared ${count} mock endpoint(s) and closed listener`
         };
       }
     },
@@ -528,7 +567,14 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
       handler: async ({ urlPattern, timeoutMs = 10000, tabId }: any) => {
         try {
           await withTimeout(connector.verifyConnection(), Math.min(timeoutMs, 5000), 'Connection timeout');
-          const client = await withTimeout(connector.getTabClient(tabId), Math.min(timeoutMs, 5000), 'Get client timeout');
+          
+          // Use PERSISTENT client
+          const client = await withTimeout(
+            connector.getPersistentClient(tabId),
+            Math.min(timeoutMs, 5000),
+            'Get persistent client timeout'
+          );
+          
           const { Network } = client;
           
           if (!Network) {
@@ -545,6 +591,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
             websocketMessages.set(effectiveTabId, []);
           }
           
+          // Register listeners on persistent client
           Network.webSocketCreated((params: any) => {
             try {
               const conns = websocketConnections.get(effectiveTabId);
@@ -612,10 +659,13 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
             }
           });
           
+          console.error(`✅ WebSocket interceptor ACTIVE and listening`);
+          
           return {
             success: true,
-            message: 'WebSocket interception enabled',
-            pattern: urlPattern || 'all'
+            message: 'WebSocket interception enabled and LISTENING',
+            pattern: urlPattern || 'all',
+            note: 'WebSocket interceptor is now ACTIVE and will capture messages until disabled'
           };
         } catch (error: any) {
           return {
