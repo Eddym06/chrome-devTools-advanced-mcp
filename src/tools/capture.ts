@@ -29,12 +29,15 @@ export function createCaptureTools(connector: ChromeConnector) {
         
         await Page.enable();
         
+        // Ensure page is rendered
+        await new Promise(r => setTimeout(r, 200));
+
         const options: any = {
           format,
           quality: format === 'jpeg' ? quality : undefined
         };
         
-        // Handle clip area
+        // Handle clip area or full page
         if (clipX !== undefined && clipY !== undefined && clipWidth && clipHeight) {
           options.clip = {
             x: clipX,
@@ -43,17 +46,54 @@ export function createCaptureTools(connector: ChromeConnector) {
             height: clipHeight,
             scale: 1
           };
+        } else if (fullPage) {
+           // For robust full page screenshot, we need layout metrics
+           try {
+             const metrics = await Page.getLayoutMetrics();
+             const cssContentSize = metrics.cssContentSize || metrics.contentSize;
+             
+             if (cssContentSize) {
+                options.clip = {
+                  x: 0,
+                  y: 0,
+                  width: Math.ceil(cssContentSize.width),
+                  height: Math.ceil(cssContentSize.height),
+                  scale: 1
+                };
+                options.captureBeyondViewport = true;
+                options.fromSurface = true;
+             } else {
+                console.warn('[Screenshot] Could not get content size for full page, falling back to basic mode');
+                options.captureBeyondViewport = true;
+             }
+           } catch (e) {
+             console.error('[Screenshot] Error getting layout metrics:', e);
+             options.captureBeyondViewport = true;
+           }
         }
         
-        // Capture screenshot
+        // Capture screenshot with timeout
+        console.error(`[Screenshot] capturing ${fullPage ? 'full page' : 'viewport'}...`);
         let screenshot;
-        if (fullPage) {
-          screenshot = await Page.captureScreenshot({
-            ...options,
-            captureBeyondViewport: true
-          });
-        } else {
-          screenshot = await Page.captureScreenshot(options);
+        
+        try {
+           // 10 second timeout for screenshots
+           const result = await new Promise<any>((resolve, reject) => {
+              const timeout = setTimeout(() => reject(new Error('Screenshot timed out after 10s')), 10000);
+              Page.captureScreenshot(options)
+                .then((res: any) => {
+                  clearTimeout(timeout);
+                  resolve(res);
+                })
+                .catch((err: any) => {
+                  clearTimeout(timeout);
+                  reject(err);
+                });
+           });
+           screenshot = result;
+        } catch (error: any) {
+           console.error('[Screenshot] Failed:', error);
+           throw new Error(`Screenshot failed: ${error.message}`);
         }
         
         return {
