@@ -54,14 +54,15 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
     
     {
       name: 'enable_response_interception',
-      description: '🔴 START HERE for traffic interception. Enables network traffic capture - intercepts ALL responses (API calls, HTTP requests). COMPLETE WORKFLOW: 1️⃣ enable_response_interception → 2️⃣ navigate or click (trigger traffic) → 3️⃣ list_intercepted_responses (see what was captured) → 4️⃣ modify_intercepted_response (optional: change response) → 5️⃣ disable_response_interception. Use when user says "intercept traffic", "capture requests", "monitor API calls". WARNING: Cannot work with create_mock_endpoint simultaneously.',
+      description: '🔴 START HERE for traffic interception. Enables network traffic capture - intercepts ALL responses (API calls, HTTP requests). COMPLETE WORKFLOW: 1️⃣ enable_response_interception → 2️⃣ navigate or click (trigger traffic) → 3️⃣ list_intercepted_responses (see what was captured) → 4️⃣ modify_intercepted_response (optional: change response) → 5️⃣ disable_response_interception. Use when user says "intercept traffic", "capture requests", "monitor API calls". WARNING: Cannot work with create_mock_endpoint simultaneously. CRITICAL: Set autoContinue=true if you only want to log/inspect responses without blocking. Otherwise page will freeze waiting for you to process each response!',
       inputSchema: z.object({
         patterns: z.array(z.string()).default(['*']).describe('URL patterns to intercept'),
         resourceTypes: z.array(z.string()).optional().describe('Resource types to intercept (Document, Script, XHR, Fetch, etc.)'),
+        autoContinue: z.boolean().default(false).describe('Automatically continue all intercepted responses without pausing. Set true for logging/inspection without blocking. Set false for manual control (you MUST call modify_intercepted_response for each response).'),
         timeoutMs: z.number().default(10000).optional().describe('Operation timeout in milliseconds (default: 10000)'),
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
-      handler: async ({ patterns = ['*'], resourceTypes, timeoutMs = 10000, tabId }: any) => {
+      handler: async ({ patterns = ['*'], resourceTypes, autoContinue = false, timeoutMs = 10000, tabId }: any) => {
         try {
           const tabKey = tabId || 'default';
           
@@ -120,12 +121,22 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
           }
           
           // Register listener on persistent client - stays active!
-          Fetch.requestPaused((params: any) => {
+          Fetch.requestPaused(async (params: any) => {
             try {
               const responses = interceptedResponses.get(effectiveTabId);
               if (responses) {
                 responses.set(params.requestId, params);
                 console.error(`[Response Interceptor] Captured: ${params.request?.url}`);
+                
+                // Auto-continue if enabled (prevents page freeze)
+                if (autoContinue) {
+                  try {
+                    await Fetch.continueRequest({ requestId: params.requestId });
+                    responses.delete(params.requestId);
+                  } catch (e) {
+                    console.error(`[Auto-continue] Failed for ${params.request?.url}:`, e);
+                  }
+                }
               }
             } catch (e) {
               console.error('[Response Interception] Error storing intercepted response:', e);
@@ -138,6 +149,8 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
             success: true,
             message: `Response interception enabled and LISTENING for patterns: ${patterns.join(', ')}`,
             patterns,
+            autoContinue: autoContinue,
+            warning: !autoContinue ? '⚠️ WARNING: You MUST call modify_intercepted_response for EVERY intercepted response, otherwise pages will freeze!' : undefined,
             stage: 'Response',
             note: 'Interceptor is now ACTIVE and will continue capturing responses until disabled'
           };

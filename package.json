@@ -1,6 +1,6 @@
 {
   "name": "@eddym06/custom-chrome-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Cross-platform Chrome MCP with response interception, request mocking, WebSocket interception, HAR recording/replay, CSS/JS injection, advanced patterns, accessibility tree, anti-detection, service workers, and more. Works on Windows, Mac, and Linux.",
   "main": "dist/index.js",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "type": "module",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "build": "tsc",

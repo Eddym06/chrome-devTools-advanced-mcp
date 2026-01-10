@@ -14,12 +14,13 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Enable network interception
     {
       name: 'enable_network_interception',
-      description: '🔒 Enables REQUEST interception (modify/block requests before they send). USE THIS WHEN: 1️⃣ Modifying request URLs (redirect API calls). 2️⃣ Changing request headers/method (test API variations). 3️⃣ Blocking specific resources (speed testing without ads). WORKFLOW: enable_network_interception → list_intercepted_requests → modify_intercepted_request/fail_intercepted_request. DIFFERENT FROM: enable_response_interception (responses, not requests). PATTERNS: ["*"] = all, ["*.js"] = JS only.',
+      description: '🔒 Enables REQUEST interception (modify/block requests before they send). USE THIS WHEN: 1️⃣ Modifying request URLs (redirect API calls). 2️⃣ Changing request headers/method (test API variations). 3️⃣ Blocking specific resources (speed testing without ads). WORKFLOW: enable_network_interception → list_intercepted_requests → modify_intercepted_request/fail_intercepted_request. DIFFERENT FROM: enable_response_interception (responses, not requests). PATTERNS: ["*"] = all, ["*.js"] = JS only. CRITICAL: Set autoContinue=true if you only want to log/inspect without blocking. Otherwise page will freeze waiting for you to process each request!',
       inputSchema: z.object({
         patterns: z.array(z.string()).default(['*']).describe('URL patterns to intercept (e.g., ["*.js", "*.css", "*api*"]). Use "*" for all requests.'),
+        autoContinue: z.boolean().default(false).describe('Automatically continue all intercepted requests without pausing. Set true for logging/inspection without blocking. Set false for manual control (you MUST call continue/modify/fail for each request).'),
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
-      handler: async ({ patterns = ['*'], tabId }: any) => {
+      handler: async ({ patterns = ['*'], autoContinue = false, tabId }: any) => {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Network, Fetch } = client;
@@ -42,14 +43,26 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
         }
         
         // Listen for intercepted requests
-        Fetch.requestPaused((params: any) => {
+        Fetch.requestPaused(async (params: any) => {
           const requests = interceptedRequests.get(effectiveTabId)!;
           requests.set(params.requestId, params);
+          
+          // Auto-continue if enabled (prevents page freeze)
+          if (autoContinue) {
+            try {
+              await Fetch.continueRequest({ requestId: params.requestId });
+              requests.delete(params.requestId);
+            } catch (e) {
+              console.error(`[Auto-continue] Failed for ${params.request.url}:`, e);
+            }
+          }
         });
         
         return {
           success: true,
           message: `Network interception enabled for patterns: ${patterns.join(', ')}`,
+          autoContinue: autoContinue,
+          warning: !autoContinue ? '⚠️ WARNING: You MUST call continue/modify/fail for EVERY intercepted request, otherwise pages will freeze!' : undefined,
           interceptedCount: 0
         };
       }
