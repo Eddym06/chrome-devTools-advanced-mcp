@@ -672,6 +672,24 @@ export function createMyTools(connector: ChromeConnector) {
 
 MIT © 2026 Eddy M
 
+## 📚 Documentación Adicional
+
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Solución de problemas comunes
+  - Herramientas no disponibles (click, type, etc.)
+  - Congelamiento de páginas
+  - Errores de conexión
+  - Problemas con sitios protegidos
+  
+- **[NETWORK_FREEZE_FIX.md](NETWORK_FREEZE_FIX.md)** - Solución al problema de páginas que se quedan cargando indefinidamente al interceptar tráfico
+
+- **[EXAMPLE_INTERCEPT_REPLICATE.md](EXAMPLE_INTERCEPT_REPLICATE.md)** - Ejemplo completo de cómo interceptar y replicar tráfico de red (caso de uso común)
+
+- **[CONDITIONAL_DESCRIPTIONS.md](CONDITIONAL_DESCRIPTIONS.md)** - Descripciones condicionales de todas las herramientas para mejor selección por IA
+
+- **[USAGE_GUIDE.md](USAGE_GUIDE.md)** - Guía de uso detallada
+
+- **[TEST_WORKFLOW.md](TEST_WORKFLOW.md)** - Flujo de pruebas y validación
+
 ## 🤝 Contribuciones
 
 ¡Las contribuciones son bienvenidas! Por favor:
