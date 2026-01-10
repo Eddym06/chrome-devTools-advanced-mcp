@@ -44,7 +44,7 @@ export function createInteractionTools(connector: ChromeConnector) {
         await humanDelay(100, 300);
         
         // Click the element
-        await withTimeout(Runtime.evaluate({
+        const result: any = await withTimeout(Runtime.evaluate({
           expression: `
             (function() {
               const el = document.querySelector('${selector}');
@@ -56,6 +56,11 @@ export function createInteractionTools(connector: ChromeConnector) {
           `,
           awaitPromise: true
         }), timeout, 'Click action timed out');
+        
+        if (result.exceptionDetails) {
+            console.error('[Click] Runtime error:', result.exceptionDetails);
+            throw new Error(`Click failed: ${result.exceptionDetails.exception?.description || 'Unknown runtime error'}`);
+        }
         
         await humanDelay();
         
@@ -108,7 +113,13 @@ export function createInteractionTools(connector: ChromeConnector) {
           })()
         `;
         
-        await withTimeout(Runtime.evaluate({ expression: script, awaitPromise: true }), timeout, 'Type action timed out');
+        const result: any = await withTimeout(Runtime.evaluate({ expression: script, awaitPromise: true }), timeout, 'Type action timed out');
+        
+        if (result.exceptionDetails) {
+            console.error('[Type] Runtime error:', result.exceptionDetails);
+            throw new Error(`Type failed: ${result.exceptionDetails.exception?.description || 'Unknown runtime error'}`);
+        }
+
         await humanDelay();
         
         return {

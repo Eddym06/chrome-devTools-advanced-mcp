@@ -146,6 +146,78 @@ export function createNavigationTools(connector: ChromeConnector) {
       }
     },
 
+    // Wait for load state
+    {
+      name: 'wait_for_load_state',
+      description: '⏳ Waits for page to reach a specific state (load, networkidle, domcontentloaded). USE THIS WHEN: 1️⃣ After clicking a link/button that loads a new page. 2️⃣ After navigation to ensure page is ready. 3️⃣ When "get_html" returns incomplete content. STATES: "load" (default, page fully loaded), "domcontentloaded" (HTML ready), "networkidle" (no network activity for 500ms - useful for SPAs).',
+      inputSchema: z.object({
+        state: z.enum(['load', 'domcontentloaded', 'networkidle']).default('load').describe('State to wait for'),
+        timeout: z.number().default(30000).describe('Timeout in milliseconds'),
+        tabId: z.string().optional().describe('Tab ID (optional)')
+      }),
+      handler: async ({ state = 'load', timeout = 30000, tabId }: any) => {
+        await connector.verifyConnection();
+        const client = await connector.getTabClient(tabId);
+        const { Page, Network } = client;
+        
+        await Page.enable();
+
+        if (state === 'networkidle') {
+           await Network.enable();
+             // Primitive network idle implementation for CDP
+            await new Promise<void>((resolve, reject) => {
+                let pendingRequests = 0;
+                let lastRequestTime = Date.now();
+                let checkInterval: NodeJS.Timeout;
+                let timeoutId: NodeJS.Timeout;
+
+                const cleanup = () => {
+                    clearInterval(checkInterval);
+                    clearTimeout(timeoutId);
+                };
+
+                timeoutId = setTimeout(() => {
+                    cleanup();
+                    // Don't fail hard on network idle, just resolve with warning
+                    console.error('[wait_for_load_state] networkidle timeout, proceeding anyway');
+                    resolve();
+                }, timeout);
+
+                Network.requestWillBeSent(() => {
+                    pendingRequests++;
+                    lastRequestTime = Date.now();
+                });
+
+                const onRequestDone = () => {
+                    if (pendingRequests > 0) pendingRequests--;
+                    lastRequestTime = Date.now();
+                };
+
+                Network.loadingFinished(onRequestDone);
+                Network.loadingFailed(onRequestDone);
+
+                checkInterval = setInterval(() => {
+                    // Wait for 0 pending requests and 500ms of silence
+                    if (pendingRequests === 0 && (Date.now() - lastRequestTime) > 500) {
+                        cleanup();
+                        resolve();
+                    }
+                }, 100);
+            });
+        } else if (state === 'domcontentloaded') {
+           await withTimeout(Page.domContentEventFired(), timeout, 'Wait for domcontentloaded timed out');
+        } else {
+           // 'load' state
+           await withTimeout(Page.loadEventFired(), timeout, 'Wait for load timed out');
+        }
+        
+        return {
+          success: true,
+          message: `Waited for state: ${state}`
+        };
+      }
+    },
+
     // List tabs
     {
       name: 'list_tabs',
