@@ -109,7 +109,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Get page HTML
     {
       name: 'get_html',
-      description: '🔍 CRITICAL ANALYSIS TOOL - extracts complete HTML source code. ⚠️ USE THIS FIRST BEFORE ANY INTERACTION! PROPER WORKFLOW: 1️⃣ navigate → 2️⃣ get_html (analyze structure) → 3️⃣ identify selectors from HTML (buttons: button.submit, inputs: input#email, links: a.nav-link) → 4️⃣ THEN click/type with verified selectors. NEVER guess selectors! Get HTML returns: element IDs, classes, button text, input names, form structure, links. Essential for: web scraping, finding correct selectors, analyzing page structure.',
+      description: '🔍 CRITICAL ANALYSIS TOOL - extracts HTML source. OUTPUT TRUNCATED at 50k chars - use specific selector for large pages. WORKFLOW: 1️⃣ navigate → 2️⃣ get_html (analyze) → 3️⃣ interact. returns: IDs, classes, text. Essential for scraping & selector verification.',
       inputSchema: z.object({
         selector: z.string().optional().describe('CSS selector to extract HTML from (e.g. "div.main-content", "#login-form"). If omitted, returns full page HTML.'),
         tabId: z.string().optional().describe('Tab ID (optional)'),

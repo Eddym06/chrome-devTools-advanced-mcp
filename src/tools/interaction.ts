@@ -185,7 +185,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Execute JavaScript (Kept separate as it's a "Catch-all" for advanced usage)
     {
       name: 'execute_script',
-      description: '⚠️ Execute JavaScript in page. WARNING: If replaying network packets, use resend_network_request instead! BEST PRACTICES: 1️⃣ Prefer perform_interaction/extract_element_data. 2️⃣ Use ONLY for: complex queries, custom events, DOM manipulation. 3️⃣ NEVER use fetch() for replaying captured traffic - use resend_network_request. 4️⃣ ALWAYS include "return" statement.',
+      description: '⚠️ Execute JavaScript in page. IMPORTANT: You MUST use "return" to get results. FOR ASYNC: Set awaitPromise=true. WARNING: Do NOT use fetch() for traffic replay (use resend_network_request). BEST PRACTICES: Use for complex DOM/events only.',
       inputSchema: z.object({
         script: z.string().describe('JavaScript code to execute. MUST include "return" statement.'),
         tabId: z.string().optional().describe('Tab ID (optional)'),

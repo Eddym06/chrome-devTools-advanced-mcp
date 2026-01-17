@@ -1,6 +1,6 @@
 {
   "name": "@eddym06/custom-chrome-mcp",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "description": "Cross-platform Chrome MCP with real-time request interception, response modification, network capture, HAR recording/replay, accessibility testing, anti-detection, and 91 tools. Includes smart workflows for common tasks. Works on Windows, Mac, and Linux.",
   "main": "dist/index.js",
   "bin": {
