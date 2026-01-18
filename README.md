@@ -1,5 +1,7 @@
 
-# <img src="assets/logo.png" align="right" width="120" height="auto" alt="Logo"> Custom Chrome MCP Server
+# <img src="assets/logo.png" align="right" width="120" height="auto" alt="Logo"> 
+
+Custom Chrome MCP Server
 
 **Your Intelligent Bridge Between AI and the Browser.**
 
