@@ -60,7 +60,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
     
     {
       name: 'enable_response_interception',
-      description: '🔴 Enable RESPONSE interception (vs request interception). USE: Capture/modify server responses before browser sees them. Default autoContinue=true (safe monitoring). WORKFLOW: enable → action → list_intercepted_responses. WHY: Primitive for response modification; use smart tools for workflows.',
+      description: 'Enable response interception to capture/modify server responses before the browser processes them.',
       inputSchema: z.object({
         patterns: z.array(z.string()).default(['*']).describe('URL patterns to intercept'),
         resourceTypes: z.array(z.string()).optional().describe('Resource types to intercept (Document, Script, XHR, Fetch, etc.)'),
@@ -230,7 +230,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'disable_response_interception',
-      description: '🔓 Disables response interception. USE THIS WHEN: Done capturing traffic, cleaning up, or switching modes. Stops listening for new responses and clears state.',
+      description: 'Disable response interception and clear captured state.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -324,7 +324,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'modify_intercepted_response',
-      description: '✏️ STEP 3 (optional) of interception workflow. Modifies captured response BEFORE browser receives it. Change: response body (JSON/HTML), headers, status code. Then sends modified packet to page. WORKFLOW: 1️⃣ enable_response_interception → 2️⃣ list_intercepted_responses (get requestId) → 3️⃣ modify_intercepted_response (change data) → 4️⃣ browser receives modified response. Use when user says "modify response", "change API data", "edit packet", "send modified data".',
+      description: 'Modify a captured response body, headers, or status code before the browser receives it. Requires requestId from list_intercepted_responses.',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from list_intercepted_responses'),
         modifiedBody: z.string().optional().describe('New response body (base64 if binary)'),
@@ -399,7 +399,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'create_mock_endpoint',
-      description: '🎭 Creates fake API endpoint - intercepts URL and returns fake data. USE THIS WHEN: 1️⃣ Testing frontend without backend (API not ready). 2️⃣ Simulating error responses (test error handling). 3️⃣ Replacing slow APIs (instant fake data). 4️⃣ Creating demo/prototype (fake data looks real). WORKFLOW: create_mock_endpoint → navigate/click → page gets fake response instead of real API. ⚠️ CONFLICT: Cannot run with enable_response_interception simultaneously. Disable interception first. PARAMS: urlPattern supports wildcards (*api.com/users*), latency simulates slow network.',
+      description: 'Create a fake API endpoint that intercepts matching URLs and returns custom responses. Cannot run with response interception simultaneously.',
       inputSchema: z.object({
         urlPattern: z.string().describe('URL pattern to mock (supports * wildcards)'),
         responseBody: z.string().describe('Response body (JSON string, HTML, etc.)'),
@@ -670,7 +670,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'enable_websocket_interception',
-      description: '📡 Intercepts WebSocket traffic (real-time bidirectional messages). USE THIS WHEN: 1️⃣ Debugging chat applications (see messages sent/received). 2️⃣ Analyzing game state updates (real-time data). 3️⃣ Monitoring live notifications/updates. 4️⃣ Inspecting streaming data. WHY: WebSockets are hidden from regular network tools (not HTTP requests). WORKFLOW: enable_websocket_interception → interact with app → list_websocket_messages → see real-time traffic. Common for: chat apps, collaborative tools, live dashboards, multiplayer games.',
+      description: 'Intercept WebSocket traffic to capture bidirectional real-time messages. Use list_websocket_messages to view.',
       inputSchema: z.object({
         urlPattern: z.string().optional().describe('URL pattern to intercept (optional, default all)'),
         timeoutMs: z.number().default(10000).optional().describe('Operation timeout in milliseconds (default: 10000)'),
@@ -959,7 +959,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'start_har_recording',
-      description: '🎬 Starts recording ALL network traffic in HAR format. USE THIS WHEN: 1️⃣ Performance analysis (find slow requests). 2️⃣ Debugging network issues (see all requests/responses). 3️⃣ Creating test fixtures (replay captured traffic later). 4️⃣ Documenting API behavior (save all API calls). 5️⃣ Security analysis (inspect headers/cookies). WORKFLOW: start_har_recording → perform actions → stop_har_recording → export_har_file. HAR files can be opened in: Chrome DevTools, HAR Viewer, performance tools.',
+      description: 'Start recording all network traffic in HAR format for performance analysis or debugging.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -1048,7 +1048,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'stop_har_recording',
-      description: '⏹️ Stops HAR recording and returns captured data. USE THIS WHEN: 1️⃣ Done testing/reproducing issue (captured enough traffic). 2️⃣ Ready to analyze requests (stop before reviewing). 3️⃣ Want to get HAR JSON (preview before exporting). PREREQUISITE: Must call start_har_recording first. WORKFLOW: start_har_recording → perform actions → stop_har_recording → export_har_file (to save to disk). Returns: Full HAR JSON with all captured requests/responses/timings.',
+      description: 'Stop HAR recording and return captured traffic data.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -1086,7 +1086,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'export_har_file',
-      description: '💾 Saves HAR recording to disk as .har file. USE THIS WHEN: 1️⃣ Sharing network logs (send to team/support). 2️⃣ Archiving test runs (keep record of network behavior). 3️⃣ Performance analysis (load in tools: Chrome DevTools, WebPageTest). 4️⃣ Creating test fixtures (replay traffic for testing). PREREQUISITE: Must call stop_har_recording first. FILE FORMAT: JSON file viewable in: Chrome DevTools Network tab, HAR Viewer online, performance tools. WORKFLOW: start_har_recording → actions → stop_har_recording → export_har_file.',
+      description: 'Save HAR recording to disk as a .har file. Must call stop_har_recording first.',
       inputSchema: z.object({
         filename: z.string().describe('Filename to save HAR (e.g., recording.har)'),
         outputDir: z.string().optional().describe('Output directory (default: current directory)'),
@@ -1171,7 +1171,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'add_advanced_interception_pattern',
-      description: '🎯 Advanced request filtering (filter by status, size, duration, content-type). USE THIS WHEN: 1️⃣ Finding slow requests (minDuration: 1000 = requests > 1s). 2️⃣ Large file analysis (minSize/maxSize for images/videos). 3️⃣ Error tracking (statusCodeMin: 400 = errors only). 4️⃣ Content type filtering (contentType: "application/json" = API calls). ACTIONS: "log" (track matches), "block" (prevent request), "delay" (throttle speed). ADVANCED: Combine multiple filters for precision (urlPattern + method + statusCodeMin).',
+      description: 'Add advanced request filtering by status code, size, duration, or content-type. Actions: log, block, delay.',
       inputSchema: z.object({
         name: z.string().describe('Pattern name for reference'),
         urlPattern: z.string().optional().describe('URL pattern (glob)'),
@@ -1328,7 +1328,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'inject_css_global',
-      description: '🎨 Injects persistent CSS into all pages (survives navigation). USE THIS WHEN: 1️⃣ Hiding elements (e.g., .ad { display: none !important; }). 2️⃣ Custom styling (dark mode, font changes, colors). 3️⃣ Fixing UI bugs (z-index issues, layout breaks). 4️⃣ Accessibility (increase contrast, font size). 5️⃣ Testing responsive design (force mobile/desktop views). PERSISTENT: CSS auto-applies to new pages. REMOVAL: Use clear_all_injections or remove_injection. TIP: Use !important for specificity.',
+      description: 'Inject persistent CSS into all pages (survives navigation). Use !important for specificity.',
       inputSchema: z.object({
         css: z.string().describe('CSS code to inject'),
         name: z.string().optional().describe('Name for this injection (for reference)'),
@@ -1421,7 +1421,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'inject_js_global',
-      description: '⚡ Injects persistent JavaScript into all pages (runs before page loads). USE THIS WHEN: 1️⃣ Intercepting functions (e.g., window.fetch = customFetch). 2️⃣ Adding global utilities (helper functions on every page). 3️⃣ Modifying APIs (override console.log, localStorage). 4️⃣ Event monitoring (capture all clicks before page code). 5️⃣ Anti-detection bypass (modify navigator.webdriver). TIMING: Runs BEFORE page scripts (critical for interception). PERSISTENT: Auto-applies to new pages. CAUTION: Can break sites if code has errors.',
+      description: 'Inject persistent JavaScript that runs before page scripts load on all pages.',
       inputSchema: z.object({
         javascript: z.string().describe('JavaScript code to inject'),
         name: z.string().optional().describe('Name for this injection (for reference)'),
@@ -1515,7 +1515,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'list_injected_scripts',
-      description: '📋 Lists all currently active global CSS/JS injections. USE THIS WHEN: 1️⃣ Debugging styling issues (check what CSS is injected). 2️⃣ Page behavior is unexpected (see active scripts). 3️⃣ Before adding more injections (avoid duplicates). 4️⃣ Getting identifiers for removal (use with remove_injection). Returns: Array with identifier, name, type (CSS/JS) for each injection. MANAGEMENT: Use clear_all_injections to remove all, or remove_injection with specific identifier.',
+      description: 'List all active global CSS/JS injections with their identifiers.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -1534,7 +1534,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'remove_injection',
-      description: '🗑️ Removes specific global CSS/JS injection by identifier. USE THIS WHEN: 1️⃣ Injection causing bugs (remove problematic script). 2️⃣ No longer needed (cleanup after testing). 3️⃣ Updating injection (remove old, add new). PREREQUISITE: Get identifier from list_injected_scripts. EFFECT: Stops applying to new pages (existing pages keep injection until refresh). TIP: Use clear_all_injections to remove all at once.',
+      description: 'Remove a specific global CSS/JS injection by identifier.',
       inputSchema: z.object({
         identifier: z.string().describe('Injection identifier from inject_css_global or inject_js_global'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -1564,7 +1564,7 @@ export function createAdvancedNetworkTools(connector: ChromeConnector) {
 
     {
       name: 'clear_all_injections',
-      description: '🧹 Removes ALL global CSS/JS injections at once. USE THIS WHEN: 1️⃣ Resetting page to default (remove all modifications). 2️⃣ Injections causing conflicts (start fresh). 3️⃣ Finishing testing (cleanup). 4️⃣ Too many injections to remove individually. EFFECT: Stops applying to new pages (existing pages keep injections until refresh). COUNT: Returns number of injections cleared. TIP: Use list_injected_scripts to see what was removed.',
+      description: 'Remove all global CSS/JS injections at once.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),

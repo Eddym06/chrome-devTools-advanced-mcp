@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import type { ChromeConnector } from '../chrome-connector.js';
+import { escJS } from '../utils/helpers.js';
 
 export function createSmartWorkflowTools(connector: ChromeConnector) {
   return [
@@ -13,7 +14,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'add_custom_header_to_request',
-      description: '✅ SIMPLE VERSION: Intercepts requests and adds a custom header before sending. USE THIS if intercept_and_modify_traffic is too complex. EXAMPLE: add_custom_header_to_request({ urlPattern: "**api**", headerName: "X-Custom", headerValue: "test", clickSelector: ".button" }). All parameters are simple strings/numbers - no nested objects.',
+      description: 'Add a custom header to matching requests before sending. Simpler alternative to intercept_and_modify_traffic with flat parameters.',
       inputSchema: z.object({
         urlPattern: z.string().describe('URL pattern to intercept (e.g., "*api*", "*.json")'),
         headerName: z.string().describe('Name of header to add (e.g., "X-Custom-Header")'),
@@ -66,7 +67,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
 
           if (clickSelector) {
             await Runtime.evaluate({
-              expression: `document.querySelector('${clickSelector}')?.click()`,
+              expression: `document.querySelector('${escJS(clickSelector)}')?.click()`,
               userGesture: true
             });
           } else if (navigateUrl) {
@@ -103,7 +104,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'intercept_and_modify_traffic',
-      description: '🎯 THE CORRECT WAY to modify network requests. Intercepts requests IN REAL-TIME before they are sent, modifies them, and sends with ORIGINAL authentication. EXAMPLE: intercept_and_modify_traffic({ urlPattern: "**/api/**", modifications: { addHeaders: { "X-Test": "value" } }, action: { type: "click", selector: ".button" } }). CRITICAL: modifications and action MUST be objects, not strings. ✅ Preserves cookies, auth, bypasses CORS.',
+      description: 'Intercept and modify network requests in real-time before sending. Preserves cookies and authentication. Supports header/body/method changes.',
       inputSchema: z.object({
         urlPattern: z.string().describe('URL pattern to intercept (e.g., "**/api/**", "*/graphql*")'),
         modifications: z.object({
@@ -213,7 +214,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
             case 'click':
               if (!action.selector) throw new Error('selector required for click action');
               await Runtime.evaluate({
-                expression: `document.querySelector('${action.selector}')?.click()`,
+                expression: `document.querySelector('${escJS(action.selector)}')?.click()`,
                 userGesture: true
               });
               break;
@@ -260,7 +261,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'capture_network_on_action',
-      description: '📊 ANALYSIS TOOL: Captures network traffic details when performing actions. USE FOR: Understanding what requests a page makes, analyzing API calls, identifying request patterns. RETURNS: Full request details (URL, headers, body, method) for analysis. ⚠️ FOR MODIFICATION: Use intercept_and_modify_traffic instead - it modifies requests IN REAL-TIME before sending, preserving authentication.',
+      description: 'Capture network requests triggered by an action (click, navigate, type). Returns full request details including URL, headers, body, and method.',
       inputSchema: z.object({
         action: z.enum(['click', 'navigate', 'type']).describe('Action to perform: click element, navigate to URL, or type text'),
         selector: z.string().optional().describe('CSS selector (required for click/type actions)'),
@@ -295,7 +296,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
             case 'click':
               if (!selector) throw new Error('selector is required for click action');
               await Runtime.evaluate({
-                expression: `document.querySelector('${selector}')?.click()`,
+                expression: `document.querySelector('${escJS(selector)}')?.click()`,
                 userGesture: true
               });
               break;
@@ -308,7 +309,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
             case 'type':
               if (!selector || !text) throw new Error('selector and text are required for type action');
               await Runtime.evaluate({
-                expression: `document.querySelector('${selector}')?.focus()`,
+                expression: `document.querySelector('${escJS(selector)}')?.focus()`,
                 userGesture: true
               });
               for (const char of text) {
@@ -359,7 +360,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'navigate_and_extract_content',
-      description: '🌐 Complete workflow: Navigate to URL and extract page content (HTML, text, links, images). Returns structured data in one call. Perfect for "go to URL and get me the page data". Combines navigation + wait + multiple extraction methods.',
+      description: 'Navigate to URL and extract page content (text, links, images, metadata) in one call.',
       inputSchema: z.object({
         url: z.string().describe('URL to navigate to'),
         waitForSelector: z.string().optional().describe('CSS selector to wait for before extracting (ensures dynamic content loads)'),
@@ -387,7 +388,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
               new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => reject('Timeout waiting for selector'), ${timeout});
                 const check = () => {
-                  if (document.querySelector('${waitForSelector}')) {
+                  if (document.querySelector('${escJS(waitForSelector)}')) {
                     clearTimeout(timeout);
                     resolve(true);
                   } else {
@@ -443,7 +444,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'test_api_endpoint',
-      description: '🧪 Complete workflow: Test an API endpoint by sending request and capturing response. Perfect for "test this API" or "make POST request to endpoint". Handles auth cookies automatically. Combines request execution + response capture + formatting.',
+      description: 'Send HTTP request to an API endpoint and capture the response. Handles auth cookies automatically.',
       inputSchema: z.object({
         url: z.string().describe('API endpoint URL'),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']).default('GET').describe('HTTP method'),
@@ -541,222 +542,11 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     },
 
     // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 4: Capture Click and Resend
-    // ═══════════════════════════════════════════════════════════════════
-    {
-      name: 'capture_click_and_resend',
-      description: '⚠️ DEPRECATED - Use intercept_and_modify_traffic instead. This tool attempts to replay captured packets but fails with CORS/auth on most APIs. The new tool intercepts and modifies in real-time BEFORE sending, which preserves authentication. Only use this for analysis/debugging, not for modifying production traffic.',
-      inputSchema: z.object({
-        clickSelector: z.string().describe('CSS selector of button/link to click'),
-        returnUrl: z.string().describe('URL to navigate back to before replaying'),
-        urlPattern: z.string().default('*').describe('Filter captured requests by URL pattern'),
-        modifyHeaders: z.record(z.string()).optional().describe('Headers to modify before replay'),
-        modifyBody: z.string().optional().describe('Body to modify before replay'),
-        tabId: z.string().optional().describe('Tab ID (optional)')
-      }),
-      handler: async ({ clickSelector, returnUrl, urlPattern, modifyHeaders, modifyBody, tabId }: any) => {
-        try {
-          await connector.verifyConnection();
-          const client = await connector.getTabClient(tabId);
-          const { Runtime, Network, Fetch, Page } = client;
-
-          await Runtime.enable();
-          await Network.enable();
-
-          // Step 1: Enable interception
-          await Fetch.enable({
-            patterns: [{ urlPattern, requestStage: 'Request' as const }]
-          });
-
-          const capturedRequests: any[] = [];
-          Fetch.requestPaused(async (params: any) => {
-            capturedRequests.push(params);
-            await Fetch.continueRequest({ requestId: params.requestId });
-          });
-
-          // Step 2: Click element
-          await Runtime.evaluate({
-            expression: `document.querySelector('${clickSelector}')?.click()`,
-            userGesture: true
-          });
-
-          // Wait for requests
-          await new Promise(resolve => setTimeout(resolve, 2000));
-
-          // Step 3: Disable interception
-          await Fetch.disable();
-
-          if (capturedRequests.length === 0) {
-            return {
-              success: false,
-              error: 'No requests captured',
-              hint: 'Check your selector and urlPattern'
-            };
-          }
-
-          // Step 4: Navigate back
-          await Page.enable();
-          await Page.navigate({ url: returnUrl });
-          await Page.loadEventFired();
-
-          // Step 5: Replay first request using the official method
-          const request = capturedRequests[0].request;
-          const finalHeaders: Record<string, string> = {};
-          
-          // Filter forbidden headers
-          const forbiddenHeaders = ['host', 'connection', 'content-length', 'origin', 'referer', 'accept-encoding', 'cookie'];
-          
-          // Merge original + custom headers
-          if (request.headers) {
-            Object.entries(request.headers).forEach(([k, v]) => {
-              if (!forbiddenHeaders.includes(k.toLowerCase())) {
-                finalHeaders[k] = v as string;
-              }
-            });
-          }
-          if (modifyHeaders) {
-            Object.entries(modifyHeaders).forEach(([k, v]) => {
-              finalHeaders[k] = v as string;
-            });
-          }
-
-          const script = `
-          (async function() {
-            try {
-              const response = await fetch("${request.url}", {
-                method: "${request.method}",
-                headers: ${JSON.stringify(finalHeaders)},
-                body: ${modifyBody ? JSON.stringify(modifyBody) : (request.postData ? JSON.stringify(request.postData) : 'undefined')},
-                credentials: 'include'
-              });
-              const text = await response.text();
-              return {
-                success: response.ok,
-                status: response.status,
-                statusText: response.statusText,
-                bodyPreview: text.substring(0, 500)
-              };
-            } catch (e) {
-              return { __error: e.message };
-            }
-          })()
-          `;
-
-          const result: any = await Runtime.evaluate({
-            expression: script,
-            awaitPromise: true,
-            returnByValue: true,
-            userGesture: true
-          });
-
-          if (result.exceptionDetails) {
-            throw new Error(`Replay failed: ${result.exceptionDetails.exception?.description}`);
-          }
-
-          const value = result.result.value;
-          if (value && value.__error) {
-            return {
-              success: false,
-              capturedCount: capturedRequests.length,
-              capturedUrl: request.url,
-              capturedMethod: request.method,
-              navigatedBackTo: returnUrl,
-              replayError: value.__error,
-              message: '✅ Packet captured successfully, ❌ Replay failed due to CORS/auth restrictions',
-              explanation: 'This is a browser security limitation. The API server rejected the replayed request because it detected it was not from the original context. The original packet was captured with all headers/data.',
-              workaround: 'Use modify_network_request to intercept and modify requests IN REAL-TIME before they are sent, instead of capturing and replaying after.'
-            };
-          }
-
-          return {
-            success: true,
-            capturedCount: capturedRequests.length,
-            capturedUrl: request.url,
-            capturedMethod: request.method,
-            navigatedBackTo: returnUrl,
-            replayResult: value,
-            message: '✅ Complete workflow executed: Click → Capture → Navigate → Replay'
-          };
-
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message
-          };
-        }
-      }
-    },
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 5 (OLD 4): Capture and Replay Request (DEPRECATED - use capture_click_and_resend)
-    // ═══════════════════════════════════════════════════════════════════
-    {
-      name: 'capture_and_replay_request',
-      description: '⚠️ DEPRECATED: Use capture_click_and_resend instead. This tool suggests the correct workflow.',
-      inputSchema: z.object({
-        triggerAction: z.enum(['click', 'navigate']).describe('How to trigger the request'),
-        selector: z.string().optional().describe('CSS selector (for click action)'),
-        url: z.string().optional().describe('URL (for navigate action)'),
-        urlPattern: z.string().describe('Pattern to match request to replay (e.g., "*api/login*")'),
-        modifyHeaders: z.record(z.string()).optional().describe('Headers to modify before replay'),
-        modifyBody: z.string().optional().describe('New body for replay (JSON string)'),
-        tabId: z.string().optional().describe('Tab ID (optional)')
-      }),
-      handler: async ({ triggerAction, selector, url, urlPattern, modifyHeaders, modifyBody, tabId }: any) => {
-        try {
-          // This is a placeholder - would use the network interception primitives
-          return {
-            success: false,
-            error: 'Implementation in progress - use capture_network_on_action + _advanced_replay_intercepted_request for now',
-            suggestion: '1) capture_network_on_action to capture, 2) Use returned requestId with _advanced_replay_intercepted_request'
-          };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message
-          };
-        }
-      }
-    },
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 5: Monitor and Modify API Responses
-    // ═══════════════════════════════════════════════════════════════════
-    {
-      name: 'monitor_and_modify_responses',
-      description: '🔧 Complete workflow: Monitor API responses and modify them before page sees data. Perfect for "change API response" or "mock server data". Combines response interception + modification + monitoring.',
-      inputSchema: z.object({
-        urlPattern: z.string().describe('URL pattern to intercept (e.g., "*api/users*")'),
-        modifyResponse: z.object({
-          body: z.string().optional().describe('New response body (JSON string)'),
-          statusCode: z.number().optional().describe('New status code'),
-          headers: z.record(z.string()).optional().describe('Modified headers')
-        }).optional().describe('Response modifications'),
-        duration: z.number().default(30000).describe('How long to monitor (ms, default: 30000)'),
-        tabId: z.string().optional().describe('Tab ID (optional)')
-      }),
-      handler: async ({ urlPattern, modifyResponse, duration, tabId }: any) => {
-        try {
-          return {
-            success: false,
-            error: 'Implementation in progress - use _advanced_enable_response_interception + _advanced_modify_intercepted_response for now',
-            suggestion: '1) _advanced_enable_response_interception, 2) Perform action, 3) _advanced_list_intercepted_responses, 4) _advanced_modify_intercepted_response'
-          };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message
-          };
-        }
-      }
-    },
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 6: Simulate User Journey
+    // SMART TOOL: Simulate User Journey
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'simulate_user_journey',
-      description: '🎬 Complete workflow: Simulate complex user interactions (multiple clicks, types, waits). Perfect for "simulate user flow" or "test checkout process". Executes sequence of actions automatically.',
+      description: 'Execute a sequence of user actions (click, type, wait, navigate, screenshot) automatically.',
       inputSchema: z.object({
         steps: z.array(z.object({
           action: z.enum(['click', 'type', 'wait', 'navigate', 'screenshot']).describe('Action type'),
@@ -788,7 +578,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
               switch (step.action) {
                 case 'click':
                   await Runtime.evaluate({
-                    expression: `document.querySelector('${step.selector}')?.click()`,
+                    expression: `document.querySelector('${escJS(step.selector || '')}')?.click()`,
                     userGesture: true
                   });
                   stepResult.success = true;
@@ -796,7 +586,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
 
                 case 'type':
                   await Runtime.evaluate({
-                    expression: `document.querySelector('${step.selector}')?.focus()`,
+                    expression: `document.querySelector('${escJS(step.selector || '')}')?.focus()`,
                     userGesture: true
                   });
                   for (const char of step.text || '') {
@@ -865,7 +655,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'extract_api_data',
-      description: '📊 Complete workflow: Navigate and extract JSON API responses. Perfect for "get API data from page" or "extract all XHR responses". Combines navigation + network capture + JSON parsing.',
+      description: 'Navigate to URL and capture all API/XHR responses. Returns parsed JSON data.',
       inputSchema: z.object({
         url: z.string().describe('URL to navigate to'),
         apiPattern: z.string().default('*').describe('Filter API calls by URL pattern (e.g., "*api*", "*.json")'),
@@ -919,7 +709,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
               new Promise((resolve, reject) => {
                 const timeout = setTimeout(() => reject('Timeout'), ${timeout});
                 const check = () => {
-                  if (document.querySelector('${waitForSelector}')) {
+                  if (document.querySelector('${escJS(waitForSelector)}')) {
                     clearTimeout(timeout);
                     resolve(true);
                   } else {
@@ -973,7 +763,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'manage_browser_session',
-      description: '💾 Complete workflow: Save/load/clear browser session (cookies + storage). Perfect for "save my login", "switch accounts", or "clear session". Handles all session data in one call.',
+      description: 'Save, load, clear, or export browser session (cookies + storage) in one call.',
       inputSchema: z.object({
         operation: z.enum(['save', 'load', 'clear', 'export']).describe('Operation: save (backup), load (restore), clear (logout), export (get JSON)'),
         sessionName: z.string().optional().describe('Session name for save/load operations'),
@@ -1105,39 +895,11 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
     },
 
     // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 9: Debug Network Performance
-    // ═══════════════════════════════════════════════════════════════════
-    {
-      name: 'debug_network_performance',
-      description: '🐌 Complete workflow: Identify slow network requests and bottlenecks. Perfect for "find slow requests" or "analyze page load". Uses HAR recording + analysis.',
-      inputSchema: z.object({
-        url: z.string().describe('URL to analyze'),
-        minDuration: z.number().default(1000).describe('Minimum request duration to flag (ms, default: 1000)'),
-        recordDuration: z.number().default(10000).describe('How long to record (ms, default: 10000)'),
-        tabId: z.string().optional().describe('Tab ID (optional)')
-      }),
-      handler: async ({ url, minDuration, recordDuration, tabId }: any) => {
-        try {
-          return {
-            success: false,
-            error: 'Implementation in progress - use start_har_recording + navigate + stop_har_recording + analyze HAR',
-            suggestion: 'Use HAR advanced tools for now'
-          };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message
-          };
-        }
-      }
-    },
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 10: Test with Different Cookies
+    // SMART TOOL: Test with Different Cookies
     // ═══════════════════════════════════════════════════════════════════
     {
       name: 'test_with_different_cookies',
-      description: '🍪 Complete workflow: Test page with modified cookies (simulate different users/sessions). Perfect for "test as different user" or "change session". Saves original, modifies, tests, restores.',
+      description: 'Test a page with modified cookies. Saves original cookies, applies test cookies, optionally restores.',
       inputSchema: z.object({
         url: z.string().describe('URL to test'),
         cookies: z.array(z.object({
@@ -1217,70 +979,6 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
             success: false,
             error: error.message,
             url: url
-          };
-        }
-      }
-    },
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 11: Monitor WebSocket Messages
-    // ═══════════════════════════════════════════════════════════════════
-    {
-      name: 'monitor_websocket_messages',
-      description: '📡 Complete workflow: Capture WebSocket messages during page interaction. Perfect for "monitor WebSocket traffic" or "capture realtime messages". Auto-enables, captures, and formats.',
-      inputSchema: z.object({
-        duration: z.number().default(30000).describe('How long to monitor (ms, default: 30000)'),
-        triggerAction: z.enum(['none', 'click', 'navigate']).default('none').describe('Action to trigger after enabling monitoring'),
-        selector: z.string().optional().describe('CSS selector (for click action)'),
-        url: z.string().optional().describe('URL (for navigate action)'),
-        filterPattern: z.string().optional().describe('Filter messages by content pattern'),
-        tabId: z.string().optional().describe('Tab ID (optional)')
-      }),
-      handler: async ({ duration, triggerAction, selector, url, filterPattern, tabId }: any) => {
-        try {
-          return {
-            success: false,
-            error: 'Implementation in progress - use enable_websocket_interception + list_websocket_messages',
-            suggestion: 'Use advanced WebSocket tools for now'
-          };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message
-          };
-        }
-      }
-    },
-
-    // ═══════════════════════════════════════════════════════════════════
-    // SMART TOOL 12: Mock API for Testing
-    // ═══════════════════════════════════════════════════════════════════
-    {
-      name: 'mock_api_for_testing',
-      description: '🎭 Complete workflow: Create API mock, test page, verify, cleanup. Perfect for "mock API response" or "test with fake data". Handles entire mock lifecycle.',
-      inputSchema: z.object({
-        mockEndpoint: z.object({
-          urlPattern: z.string().describe('URL pattern to mock (e.g., "*api/users*")'),
-          responseBody: z.string().describe('Mock response body (JSON string)'),
-          statusCode: z.number().default(200).describe('HTTP status code'),
-          headers: z.record(z.string()).optional().describe('Response headers')
-        }).describe('Mock endpoint configuration'),
-        testUrl: z.string().describe('URL to test with mock'),
-        verifyMockUsed: z.boolean().default(true).describe('Verify the mock was actually used'),
-        autoCleanup: z.boolean().default(true).describe('Remove mock after test'),
-        tabId: z.string().optional().describe('Tab ID (optional)')
-      }),
-      handler: async ({ mockEndpoint, testUrl, verifyMockUsed, autoCleanup, tabId }: any) => {
-        try {
-          return {
-            success: false,
-            error: 'Implementation in progress - use create_mock_endpoint + navigate + clear_all_mocks',
-            suggestion: 'Use advanced mock tools for now'
-          };
-        } catch (error: any) {
-          return {
-            success: false,
-            error: error.message
           };
         }
       }

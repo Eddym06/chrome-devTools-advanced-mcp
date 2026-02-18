@@ -19,7 +19,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Show captured requests - RENAMED for clarity
     {
       name: 'show_captured_network_traffic',
-      description: '📝 List all captured network requests with URLs, methods, headers, and requestIds. USE: After start_capturing_network_requests to see traffic. Returns both paused and auto-continued requests. WHY: Official way to see intercepted traffic (not execute_script/Performance API). Copy requestId for resend_network_request.',
+      description: 'List all captured network requests with URLs, methods, headers, and requestIds.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -75,7 +75,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Enable network interception - RENAMED
     {
       name: 'start_capturing_network_requests',
-      description: '✅ START INTERCEPTION - The foundation for modifying requests in real-time. USE: Enable interception BEFORE the action that generates requests. Then use modify_network_request to change requests AS THEY HAPPEN (preserves auth). MODES: autoContinue=true (monitoring only), pauseMode="firstOnly" (modify first request safely). 🎯 This + modify_network_request = The correct workflow for authenticated APIs.',
+      description: 'Enable request interception. Use autoContinue=true for monitoring, pauseMode for modification with modify_network_request.',
       inputSchema: z.object({
         patterns: z.array(z.string()).default(['*']).describe('URL patterns to intercept (e.g., ["*.js", "*.css", "*api*"]). Use "*" for all requests.'),
         autoContinue: z.boolean().default(true).describe('Automatically continue requests? TRUE (Default): Logs request to history and continues immediately (No Freeze). FALSE: Pauses browser for manual modify/continue (CAUTION: FREEZES PAGE).'),
@@ -192,7 +192,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Modify and continue intercepted request
     {
       name: 'modify_network_request',
-      description: '✅ MODIFY IN REAL-TIME - Changes intercepted request BEFORE it\'s sent (preserves auth/cookies). USE: After start_capturing_network_requests pauses a request, call this to modify URL/headers/body, then it\'s sent with ORIGINAL authentication. PERFECT FOR: Adding custom headers, changing API endpoints, testing different payloads. ⚠️ Must have active interception with pauseMode. This is THE CORRECT way to modify authenticated requests.',
+      description: 'Modify an intercepted request URL, headers, or body before sending. Preserves original authentication and cookies.',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from show_captured_network_traffic'),
         modifiedUrl: z.string().optional().describe('New URL to request'),
@@ -244,7 +244,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Fail intercepted request
     {
       name: 'block_network_request',
-      description: '⛔ Block request with network error (simulate offline/failed API). USE: Test error handling, block ads/trackers, force timeouts. PREREQUISITE: Get requestId from show_captured_network_traffic. Errors: Failed, Aborted, TimedOut, AccessDenied. WHY: Primitive for testing; use smart tools.',
+      description: 'Block an intercepted request with a network error (Failed, Aborted, TimedOut, AccessDenied).',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from show_captured_network_traffic'),
         errorReason: z.enum([
@@ -298,7 +298,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Continue intercepted request (without modifications)
     {
       name: 'continue_network_request',
-      description: '▶️ Continue paused request without changes. USE: Inspect traffic without modification, conditional logic. PREREQUISITE: Get requestId from show_captured_network_traffic. Must call continue/modify/block for ALL paused requests. WHY: Primitive; use autoContinue=true for monitoring.',
+      description: 'Continue a paused request without modifications.',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from show_captured_network_traffic'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -333,7 +333,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Replay/Resend intercepted request - RENAMED
     {
       name: 'resend_network_request',
-      description: '🔁 Replay captured packets with modified headers/body. Takes requestId from capture_network_on_action or show_captured_network_traffic. EXAMPLE: capture_network_on_action → resend_network_request({ requestId }). ⚠️ LIMITATION: Uses fetch() internally - may fail with CORS errors or authentication issues on APIs with strict security. This is a browser security restriction, not a tool bug. The original packet was captured successfully.',
+      description: 'Replay a captured request with optional header/body modifications. May fail with CORS on strict APIs.',
       inputSchema: z.object({
         requestId: z.string().describe('Request ID from show_captured_network_traffic (active or history)'),
         tabId: z.string().optional().describe('Tab ID (optional)'),
@@ -459,7 +459,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Disable network interception - RENAMED
     {
       name: 'stop_capturing_network_requests',
-      description: '🔓 Disable request interception (cleanup). USE: End of testing workflow, switch to normal browsing. Releases pending requests, clears storage. WHY: Cleanup primitive; smart tools auto-cleanup.',
+      description: 'Disable request interception and release pending requests.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -486,7 +486,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Get accessibility tree
     {
       name: 'get_accessibility_tree',
-      description: '🌳 Get full accessibility tree (screen reader view). USE: Test a11y compliance, debug ARIA roles/labels, verify semantic HTML. Returns hierarchical tree with roles/names/values. WHY: Primitive for a11y analysis.',
+      description: 'Get the full accessibility tree with roles, names, and values for accessibility testing.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)'),
         depth: z.number().default(-1).describe('Depth of the tree to retrieve (-1 for full tree)'),
@@ -565,7 +565,7 @@ export function createNetworkAccessibilityTools(connector: ChromeConnector) {
     // Get accessibility snapshot (simpler, Playwright-style)
     {
       name: 'get_accessibility_snapshot',
-      description: '📸 Simplified accessibility snapshot (key info only). USE THIS WHEN: 1️⃣ Quick accessibility check (don\'t need full tree). 2️⃣ Finding interactive elements (buttons, links). 3️⃣ Verifying labels exist (form inputs have names). 4️⃣ Smaller output than get_accessibility_tree. RETURNS: Flat list with role, name, value for each element. FASTER: Less data than full tree. USE CASE: Playwright-style accessibility testing.',
+      description: 'Get a simplified accessibility snapshot with key interactive elements (roles, names, values).',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)'),
         interestingOnly: z.boolean().default(true).describe('Only include interesting nodes (buttons, links, inputs, etc.)')

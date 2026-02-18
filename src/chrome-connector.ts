@@ -168,6 +168,15 @@ export class ChromeConnector {
    * This is more robust for persistent profiles than Playwright's launcher
    */
   async launchWithProfile(options: LaunchOptions = {}): Promise<void> {
+    console.error(`[launchWithProfile] >>> CALLED AT: ${new Date().toISOString()}`);
+    console.error(`[launchWithProfile] Profile: ${options.profileDirectory || 'Default'}`);
+    console.error('[launchWithProfile] Stack trace:');
+    try {
+      throw new Error('STACK_TRACE');
+    } catch (e: any) {
+      console.error(e.stack.split('\n').slice(2, 8).join('\n'));
+    }
+    
     // 1. Check connections
     if (this.connection?.connected) {
       console.error('✅ Already connected to a Chrome instance.');
@@ -203,14 +212,6 @@ export class ChromeConnector {
       } catch (activateErr) {
           console.error('⚠️ Could not activate window:', activateErr);
       }
-      
-      // Verify network connectivity (as requested by user) even for existing instances
-      try {
-          const { stdout: pingOutput } = await execAsync('ping -n 1 google.com');
-          if (pingOutput.includes('TTL=') || pingOutput.includes('tiempo=')) {
-            console.error('✅ Network connectivity verified');
-          }
-      } catch (e) { /* ignore ping failure */ }
       
       return;
     } catch (e) {
@@ -418,21 +419,6 @@ export class ChromeConnector {
        console.error('⚠️ Warning: Could not verify targets listing:', verErr);
     }
     
-    // Step 5: Verify network connectivity and Chrome window visibility
-    console.error('🔍 Step 5: Verifying network connectivity and browser visibility...');
-    try {
-      // Test network connectivity with ping
-      const { stdout: pingOutput } = await execAsync('ping -n 2 google.com');
-      
-      if (pingOutput.includes('TTL=') || pingOutput.includes('tiempo=')) {
-        console.error('✅ Network connectivity verified (google.com reachable)');
-      } else {
-        console.error('⚠️ Network connectivity test inconclusive');
-      }
-    } catch (pingErr) {
-      console.error('⚠️ Network test failed (this may be normal if offline):', (pingErr as Error).message);
-    }
-    
     console.error('');
     console.error('🎉 Chrome launch verification complete!');
     console.error(`   Process: Running (PID ${this.chromeProcess!.pid})`);
@@ -561,6 +547,62 @@ export class ChromeConnector {
    */
   isConnected(): boolean {
     return this.connection?.connected ?? false;
+  }
+
+  /**
+   * Ensure Chrome is connected, auto-launching if needed.
+   * Called automatically before every tool invocation.
+   */
+  async ensureConnected(): Promise<void> {
+    console.error(`[ensureConnected] >>> CALLED AT: ${new Date().toISOString()}`);
+    console.error('[ensureConnected] Stack trace:');
+    try {
+      throw new Error('STACK_TRACE');
+    } catch (e: any) {
+      console.error(e.stack.split('\n').slice(2, 8).join('\n'));
+    }
+    
+    // Already connected - verify it's still alive
+    if (this.connection?.connected) {
+      try {
+        const targets = await CDP.List({ port: this.port });
+        if (targets && targets.length > 0) {
+          return; // Connection is alive and has targets
+        }
+        throw new Error('Chrome process alive but no targets available');
+      } catch (err) {
+        console.error('[Auto-connect] Connection dead, cleaning up...', (err as Error).message);
+        this.handleProcessDeath();
+      }
+    }
+
+    // Try to connect to an existing Chrome instance on the port
+    try {
+      await this.connect();
+      console.error(`[Auto-connect] Connected to existing Chrome on port ${this.port}`);
+      
+      // Attach Playwright wrapper if possible
+      try {
+        const browser = await chromium.connectOverCDP(`http://localhost:${this.port}`);
+        this.browserContext = browser.contexts()[0];
+        console.error('[Auto-connect] Playwright wrapper attached');
+      } catch { /* CDP still works without Playwright */ }
+      
+      return;
+    } catch (err) {
+      console.error('[Auto-connect] No Chrome found on port', this.port, '-', (err as Error).message);
+    }
+
+    // Launch Chrome with Default profile
+    console.error('[Auto-connect] Launching Chrome with Default profile...');
+    try {
+      await this.launchWithProfile({ profileDirectory: 'Default' });
+      console.error('[Auto-connect] Chrome launched successfully');
+    } catch (launchErr) {
+      const err = launchErr as Error;
+      console.error('[Auto-connect] Failed to launch Chrome:', err.message);
+      throw new Error(`Failed to launch Chrome: ${err.message}. Try: 1) Close all Chrome windows, 2) Check port ${this.port} is available, 3) Restart VS Code`);
+    }
   }
 
   /**

@@ -11,7 +11,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Apply stealth mode
     {
       name: 'enable_stealth_mode',
-      description: '🥷 Makes automation undetectable (hides bot flags). USE THIS WHEN: 1️⃣ Site blocking automation ("Access denied", CAPTCHA loops). 2️⃣ Bot detection triggers (Cloudflare, DataDome, PerimeterX). 3️⃣ Web scraping protected sites. 4️⃣ Testing anti-bot systems. WHY CRITICAL: Sites check navigator.webdriver, plugins, permissions. HIDES: webdriver flag, missing plugins, automation properties. PERSISTENT: Applies to current + future pages. TIP: Call BEFORE navigating to protected site.',
+      description: 'Hide automation flags (webdriver, plugins) to bypass bot detection. Call before navigating to protected sites.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -129,7 +129,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Randomize user agent
     {
       name: 'set_user_agent',
-      description: '🌐 Changes browser user agent string (impersonate browsers/devices). USE THIS WHEN: 1️⃣ Testing mobile vs desktop views (use mobile UA). 2️⃣ Site blocks your browser ("Browser not supported"). 3️⃣ Accessing device-specific content (mobile-only features). 4️⃣ Bypassing UA-based restrictions. EXAMPLES: Mobile iOS, Android, Chrome, Firefox, Safari. TIP: Omit parameter for realistic Chrome UA. AFFECTS: Server sees different browser/device, changes Content-Type, layout.',
+      description: 'Change the browser user agent string to impersonate different browsers or devices.',
       inputSchema: z.object({
         userAgent: z.string().optional().describe('Custom user agent (optional, uses realistic default if not provided)'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -161,7 +161,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Set viewport
     {
       name: 'set_viewport',
-      description: '📱 Sets viewport dimensions (browser window size). USE THIS WHEN: 1️⃣ Testing responsive design (mobile: 375x667, tablet: 768x1024). 2️⃣ Triggering mobile layouts (set mobile: true). 3️⃣ Screenshot specific sizes (consistent captures). 4️⃣ Debugging layout breakpoints. PARAMETERS: width/height (pixels), mobile (enables touch), deviceScaleFactor (retina: 2). EFFECT: Triggers CSS media queries, changes layout, enables/disables mobile features.',
+      description: 'Set viewport dimensions and device emulation (width, height, mobile, deviceScaleFactor).',
       inputSchema: z.object({
         width: z.number().describe('Viewport width'),
         height: z.number().describe('Viewport height'),
@@ -192,7 +192,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Emulate geolocation
     {
       name: 'set_geolocation',
-      description: '📍 Overrides GPS location (fakes device position). USE THIS WHEN: 1️⃣ Testing location-based features (maps, weather, stores). 2️⃣ Accessing geo-restricted content (region-specific sites). 3️⃣ Bypassing location checks ("Service unavailable in your area"). 4️⃣ Debugging location permissions. PARAMETERS: latitude/longitude (decimal degrees), accuracy (meters). EFFECT: navigator.geolocation returns fake coords. EXAMPLES: NYC: 40.7128,-74.0060, London: 51.5074,-0.1278.',
+      description: 'Override GPS location with custom latitude/longitude coordinates.',
       inputSchema: z.object({
         latitude: z.number().describe('Latitude'),
         longitude: z.number().describe('Longitude'),
@@ -221,7 +221,7 @@ export function createAntiDetectionTools(connector: ChromeConnector) {
     // Set timezone
     {
       name: 'set_timezone',
-      description: '🕐 Overrides browser timezone. USE THIS WHEN: 1️⃣ Testing time-dependent features (booking systems, event times). 2️⃣ Matching geolocation (set NYC timezone with NYC location). 3️⃣ Debugging timezone bugs (test different zones). 4️⃣ Bypassing timezone fingerprinting (consistency with IP location). FORMAT: IANA timezone ID. EXAMPLES: "America/New_York", "Europe/London", "Asia/Tokyo". EFFECT: Changes Date.getTimezoneOffset(), time displays, scheduling.',
+      description: 'Override browser timezone using IANA timezone ID (e.g., America/New_York, Europe/London).',
       inputSchema: z.object({
         timezoneId: z.string().describe('Timezone ID (e.g., "America/New_York")'),
         tabId: z.string().optional().describe('Tab ID (optional)')

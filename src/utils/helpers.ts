@@ -3,6 +3,14 @@
  */
 
 /**
+ * Escape a string for safe interpolation inside single-quoted JS strings.
+ * Prevents injection when user-provided selectors/values contain quotes.
+ */
+export function escJS(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+/**
  * Add random human-like delay
  */
 export async function humanDelay(min: number = 100, max: number = 500): Promise<void> {

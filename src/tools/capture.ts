@@ -5,13 +5,14 @@
 import { z } from 'zod';
 import type { ChromeConnector } from '../chrome-connector.js';
 import { truncateOutput } from '../utils/truncate.js';
+import { escJS } from '../utils/helpers.js';
 
 export function createCaptureTools(connector: ChromeConnector) {
   return [
     // Take screenshot
     {
       name: 'screenshot',
-      description: '📸 Visual page analysis tool - captures PNG/JPEG screenshots. WHEN TO USE: 1️⃣ BEFORE interactions - analyze page layout visually to find buttons/forms. 2️⃣ AFTER actions - verify results visually. 3️⃣ When HTML is too complex to parse. 4️⃣ Visual debugging of UI issues. WORKFLOW: navigate → screenshot → analyze visually → identify elements → interact. Use for: visual testing, documentation, monitoring UI, capturing proof, creating thumbnails.',
+      description: 'Capture a PNG/JPEG screenshot of the full page or a specific element/area.',
       inputSchema: z.object({
         format: z.enum(['png', 'jpeg']).default('png').describe('Image format'),
         quality: z.number().min(0).max(100).default(90).describe('JPEG quality (0-100)'),
@@ -109,7 +110,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Get page HTML
     {
       name: 'get_html',
-      description: '🔍 CRITICAL ANALYSIS TOOL - extracts HTML source. OUTPUT TRUNCATED at 50k chars - use specific selector for large pages. WORKFLOW: 1️⃣ navigate → 2️⃣ get_html (analyze) → 3️⃣ interact. returns: IDs, classes, text. Essential for scraping & selector verification.',
+      description: 'Extract HTML source from the page or a specific CSS selector. Output truncated at 50k chars.',
       inputSchema: z.object({
         selector: z.string().optional().describe('CSS selector to extract HTML from (e.g. "div.main-content", "#login-form"). If omitted, returns full page HTML.'),
         tabId: z.string().optional().describe('Tab ID (optional)'),
@@ -125,8 +126,7 @@ export function createCaptureTools(connector: ChromeConnector) {
         let expression;
         
         if (selector) {
-          // Escape selector to prevent injection/syntax errors
-          const safeSelector = selector.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+          const safeSelector = escJS(selector);
           expression = `(function() {
             const el = document.querySelector('${safeSelector}');
             if (!el) return 'ELEMENT_NOT_FOUND';

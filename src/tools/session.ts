@@ -11,7 +11,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Get cookies
     {
       name: 'get_cookies',
-      description: '🍪 Retrieves browser cookies. USE THIS WHEN: 1️⃣ Login successful but still seeing login page (check auth cookie exists). 2️⃣ Session not persisting across refreshes (verify session cookie). 3️⃣ Features unavailable despite authentication (check auth token value). 4️⃣ Debugging third-party integrations (check tracking cookies). WHY CRITICAL: Many auth/session issues are cookie-related (expired, wrong domain, missing httpOnly flag). Cookies contain hidden auth data NOT visible in HTML. COMMON FIXES: Missing cookie = login failed silently, Expired cookie = re-login needed, Wrong domain = CORS/subdomain issue.',
+      description: 'Get browser cookies for the current page or a specific URL.',
       inputSchema: z.object({
         url: z.string().optional().describe('URL to get cookies for (optional, uses current page if not specified)'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -48,7 +48,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Set cookie
     {
       name: 'set_cookie',
-      description: '🔧 Creates/modifies cookies. USE THIS WHEN: 1️⃣ Simulating logged-in state (inject auth cookie). 2️⃣ Bypassing login for testing (set session cookie directly). 3️⃣ Testing authenticated features without full login flow. 4️⃣ Transferring session from one browser to another. 5️⃣ Setting up test environment with specific state. PARAMETERS: domain (auto-detected if omitted), secure/httpOnly flags important for auth cookies. CAUTION: Cookie must match domain rules (no cross-domain cookies).',
+      description: 'Set a browser cookie with name, value, domain, and optional flags (secure, httpOnly, sameSite).',
       inputSchema: z.object({
         name: z.string().describe('Cookie name'),
         value: z.string().describe('Cookie value'),
@@ -106,7 +106,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Delete cookie
     {
       name: 'delete_cookie',
-      description: '🗑️ Deletes specific cookie by name. USE THIS WHEN: 1️⃣ Logging out (delete session/auth cookies). 2️⃣ Testing without login (remove auth cookie). 3️⃣ Resetting specific state (tracking, preferences). 4️⃣ Debugging cookie issues (remove problematic cookie). PARAMETERS: name (required), domain (auto-detects if omitted), path (default: "/"). TIP: Use get_cookies first to see exact name/domain. EFFECT: Cookie deleted, may trigger logout or state reset.',
+      description: 'Delete a specific cookie by name. Use get_cookies first to find exact name and domain.',
       inputSchema: z.object({
         name: z.string().describe('Cookie name to delete'),
         domain: z.string().optional().describe('Cookie domain (optional, uses current domain if not specified)'),
@@ -142,7 +142,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Clear all cookies
     {
       name: 'clear_cookies',
-      description: '🧹 Clears ALL cookies (current domain or all domains). USE THIS WHEN: 1️⃣ Full logout (remove all auth). 2️⃣ Starting fresh test (clean slate). 3️⃣ Debugging cookie conflicts (eliminate all cookies). 4️⃣ Privacy cleanup (remove tracking). PARAMETERS: domain (specific domain) or omit (clear ALL domains). WARNING: domain=null clears EVERYTHING across all sites. EFFECT: Complete logout, lost preferences, tracking reset.',
+      description: 'Clear all cookies for a specific domain or all domains.',
       inputSchema: z.object({
         allDomains: z.boolean().default(false).describe('Clear cookies for all domains'),
         tabId: z.string().optional().describe('Tab ID (optional)')
@@ -184,7 +184,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Get localStorage
     {
       name: 'get_local_storage',
-      description: '💾 Retrieves all localStorage items (key-value pairs). USE THIS WHEN: 1️⃣ Debugging state issues (see stored data). 2️⃣ Inspecting app data (user prefs, cached content). 3️⃣ Verifying save worked (check data persisted). 4️⃣ Extracting session info (auth tokens, user data). RETURNS: Object with all keys/values, count. COMMON KEYS: auth tokens, user settings, cached API responses. TIP: Use set_local_storage to modify values.',
+      description: 'Get all localStorage key-value pairs for the current domain.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -217,7 +217,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Set localStorage item
     {
       name: 'set_local_storage',
-      description: '✏️ Sets localStorage key-value pair. USE THIS WHEN: 1️⃣ Injecting auth tokens (bypass login). 2️⃣ Setting user preferences (theme, language). 3️⃣ Fixing state issues (force specific value). 4️⃣ Testing with mock data (inject test values). PARAMETERS: key (string), value (string - use JSON.stringify for objects). PERSISTENT: Survives page refresh, NOT navigation to other domains. TIP: Refresh page after setting to see effect.',
+      description: 'Set a localStorage key-value pair. Use JSON.stringify for object values.',
       inputSchema: z.object({
         key: z.string().describe('Storage key'),
         value: z.string().describe('Storage value'),
@@ -248,7 +248,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Clear localStorage
     {
       name: 'clear_local_storage',
-      description: '🗑️ Deletes ALL localStorage items for current domain. USE THIS WHEN: 1️⃣ Resetting app state (start fresh). 2️⃣ Fixing corrupt data (clear and reload). 3️⃣ Testing first-time experience (simulate new user). 4️⃣ Debugging state issues (eliminate cached data). WARNING: Removes ALL keys - may log out user, lose preferences. SCOPE: Only current domain (other sites unaffected). TIP: Use get_local_storage first to backup data.',
+      description: 'Clear all localStorage items for the current domain.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -277,7 +277,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Export session
     {
       name: 'export_session',
-      description: '📦 Exports complete session state (cookies, localStorage, sessionStorage). USE THIS WHEN: 1️⃣ Saving logged-in state (restore later without re-login). 2️⃣ Transferring session (move to another browser/machine). 3️⃣ Backup before testing (save state, test, restore). 4️⃣ Debugging session issues (analyze all session data). RETURNS: JSON with all cookies, localStorage, sessionStorage. WORKFLOW: export_session → save JSON → import_session to restore.',
+      description: 'Export complete session state (cookies, localStorage, sessionStorage) as JSON for later import.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -331,7 +331,7 @@ export function createSessionTools(connector: ChromeConnector) {
     // Import session
     {
       name: 'import_session',
-      description: '📥 Imports previously exported session (restores cookies, storage). USE THIS WHEN: 1️⃣ Restoring logged-in state (skip login with saved session). 2️⃣ Transferring session (from export_session). 3️⃣ Testing with specific state (restore known-good session). 4️⃣ Automating login (save session once, reuse forever). PREREQUISITE: Get sessionData JSON from export_session. EFFECT: Sets all cookies, localStorage, sessionStorage. TIP: Navigate after import to activate session.',
+      description: 'Import previously exported session data to restore cookies and storage. Navigate after import to activate.',
       inputSchema: z.object({
         sessionData: z.string().describe('Session data as JSON string'),
         tabId: z.string().optional().describe('Tab ID (optional)')

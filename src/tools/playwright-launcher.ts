@@ -1,65 +1,55 @@
 /**
  * Playwright Launcher Tool
- * Launch Chrome with user profile using Playwright
+ * Launch browsers with user profile using Playwright
  */
 
 import { z } from 'zod';
+import * as path from 'path';
+import * as os from 'os';
 import type { ChromeConnector } from '../chrome-connector.js';
+
+/**
+ * Resolve Edge executable path across platforms
+ */
+function getEdgePaths(): { userDataDir: string; executablePath: string } {
+  const platform = os.platform();
+  
+  if (platform === 'win32') {
+    return {
+      userDataDir: path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'User Data'),
+      executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
+    };
+  } else if (platform === 'darwin') {
+    return {
+      userDataDir: path.join(os.homedir(), 'Library', 'Application Support', 'Microsoft Edge'),
+      executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
+    };
+  } else {
+    // Linux
+    return {
+      userDataDir: path.join(os.homedir(), '.config', 'microsoft-edge'),
+      executablePath: '/usr/bin/microsoft-edge'
+    };
+  }
+}
 
 export function createPlaywrightLauncherTools(connector: ChromeConnector) {
   return [
     {
-      name: 'launch_chrome_with_profile',
-      description: '🚀 Launches Chrome with YOUR profile (cookies, extensions, sessions). USE THIS WHEN: 1️⃣ Starting automation (first tool to call). 2️⃣ Need existing login sessions (avoid re-login). 3️⃣ Testing with extensions enabled. 4️⃣ Keeping browsing history/bookmarks. PROFILES: "Default" (main), "Profile 1", "Profile 2". PREREQUISITE: Close ALL Chrome windows first (conflict error otherwise). RECOMMENDED: Always use this instead of connecting to external Chrome.',
-      inputSchema: z.object({
-        profileDirectory: z.string().default('Default').describe('Profile directory name: "Default", "Profile 1", "Profile 2", etc.'),
-        userDataDir: z.string().optional().describe('Full path to Chrome User Data directory. Leave empty for default location.')
-      }),
-      handler: async ({ profileDirectory, userDataDir }: any) => {
-        try {
-          const options: any = {
-            headless: false,
-            profileDirectory
-          };
-          
-          if (userDataDir) {
-            options.userDataDir = userDataDir;
-          }
-          
-          await connector.launchWithProfile(options);
-          
-          return {
-            success: true,
-            message: `Chrome launched with profile: ${profileDirectory}`,
-            cdpPort: connector.getPort(),
-            note: 'Chrome is now running with all your cookies, sessions, and extensions. Use other MCP tools to interact with it.'
-          };
-        } catch (error) {
-          return {
-            success: false,
-            error: (error as Error).message,
-            suggestion: 'Make sure Chrome is not already running. Close all Chrome windows and try again.'
-          };
-        }
-      }
-    },
-    
-    {
       name: 'launch_edge_with_profile',
-      description: '🧭Launches Microsoft Edge with YOUR profile (Edge-specific). USE THIS WHEN: 1️⃣ Testing Edge-specific features. 2️⃣ Need Edge browser specifically (not Chrome). 3️⃣ Using Edge profile with saved logins. PROFILES: "Default", "Profile 1". PREREQUISITE: Close all Edge windows. NOTE: Most features work identically to Chrome (Chromium-based).',
+      description: 'Launch Microsoft Edge with your profile (cookies, extensions, sessions). Close all Edge windows first. Most features work identically to Chrome.',
       inputSchema: z.object({
-        profileDirectory: z.string().default('Default').describe('Profile directory name')
+        profileDirectory: z.string().default('Default').describe('Profile directory name: "Default", "Profile 1", etc.')
       }),
       handler: async ({ profileDirectory }: any) => {
         try {
-          const edgeUserData = `${process.env.LOCALAPPDATA}\\Microsoft\\Edge\\User Data`;
-          const edgeExe = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe';
+          const edgePaths = getEdgePaths();
           
           await connector.launchWithProfile({
             headless: false,
             profileDirectory,
-            userDataDir: edgeUserData,
-            executablePath: edgeExe
+            userDataDir: edgePaths.userDataDir,
+            executablePath: edgePaths.executablePath
           });
           
           return {
@@ -78,7 +68,7 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
     
     {
       name: 'close_browser',
-      description: '🚪 Closes Playwright-managed browser (cleanup). USE THIS WHEN: 1️⃣ Done with automation session. 2️⃣ Want to release browser lock (launch again). 3️⃣ Cleaning up after testing. PREREQUISITE: Browser launched with launch_chrome_with_profile. EFFECT: Browser closes, profile unlocked. NOTE: Only works for Playwright-managed browsers (not external connections).',
+      description: 'Close the Playwright-managed browser and release all connections. Only works for browsers launched by this MCP.',
       inputSchema: z.object({}),
       handler: async () => {
         try {
@@ -106,7 +96,7 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
     
     {
       name: 'get_browser_status',
-      description: '📊 Checks browser connection status. USE THIS WHEN: 1️⃣ Verifying browser launched successfully. 2️⃣ Debugging connection issues. 3️⃣ Checking if Playwright-managed or external. RETURNS: connected (boolean), playwrightManaged (boolean), port (CDP port), status (string). STATES: "Running via Playwright", "Connected to external Chrome", "Not connected".',
+      description: 'Check browser connection status, CDP port, and whether managed by Playwright or external.',
       inputSchema: z.object({}),
       handler: async () => {
         const isConnected = connector.isConnected();

@@ -4,7 +4,7 @@
 
 import { z } from 'zod';
 import type { ChromeConnector } from '../chrome-connector.js';
-import { humanDelay, waitFor, withTimeout } from '../utils/helpers.js';
+import { humanDelay, waitFor, withTimeout, escJS } from '../utils/helpers.js';
 import { truncateOutput } from '../utils/truncate.js';
 
 export function createInteractionTools(connector: ChromeConnector) {
@@ -12,7 +12,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Consolidated Interaction Tool
     {
       name: 'perform_interaction',
-      description: '🖱️ Performs actions on page elements. ACTIONS: "click" (buttons/links), "type" (inputs/forms), "select" (dropdowns), "scroll" (page/element), "wait" (for element). COMBINES: click, type, select_option, scroll, wait_for_selector. PREREQUISITE: ALWAYS use get_html/screenshot first to verify selectors.',
+description: 'Interact with page elements: click, type into inputs, select dropdown options, scroll, or wait for selector. Use get_html first to verify selectors.',
       inputSchema: z.object({
         action: z.enum(['click', 'type', 'select', 'scroll', 'wait']).describe('Action to perform'),
         selector: z.string().describe('CSS selector (Required for click, type, select, wait. Optional for scroll)'),
@@ -35,10 +35,11 @@ export function createInteractionTools(connector: ChromeConnector) {
         if (action === 'click') {
             if (!selector) throw new Error('Selector required for click');
             
+            const safeSelector = escJS(selector);
             // Wait for selector first
             const found = await waitFor(async () => {
                 const result = await Runtime.evaluate({
-                    expression: `document.querySelector('${selector}') !== null`
+                    expression: `document.querySelector('${safeSelector}') !== null`
                 });
                 return result.result.value === true;
             }, timeoutMs);
@@ -49,7 +50,7 @@ export function createInteractionTools(connector: ChromeConnector) {
             const result: any = await withTimeout(Runtime.evaluate({
                 expression: `
                     (function() {
-                        const el = document.querySelector('${selector}');
+                        const el = document.querySelector('${safeSelector}');
                         if (!el) throw new Error('Element not found');
                         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         el.click();
@@ -71,9 +72,10 @@ export function createInteractionTools(connector: ChromeConnector) {
             if (!selector) throw new Error('Selector required for type');
             if (text === undefined) throw new Error('Text required for type');
 
+            const safeSel = escJS(selector);
             const script = `
                 (async function() {
-                    const el = document.querySelector('${selector}');
+                    const el = document.querySelector('${safeSel}');
                     if (!el) throw new Error('Element not found');
                     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
                     el.focus();
@@ -101,12 +103,14 @@ export function createInteractionTools(connector: ChromeConnector) {
              if (!selector) throw new Error('Selector required for select');
              if (value === undefined) throw new Error('Value required for select');
 
+             const safeSel = escJS(selector);
+             const safeVal = escJS(value);
              await Runtime.evaluate({
                 expression: `
                     (function() {
-                        const select = document.querySelector('${selector}');
+                        const select = document.querySelector('${safeSel}');
                         if (!select) throw new Error('Select element not found');
-                        select.value = '${value}';
+                        select.value = '${safeVal}';
                         select.dispatchEvent(new Event('change', { bubbles: true }));
                         return true;
                     })()
@@ -119,7 +123,7 @@ export function createInteractionTools(connector: ChromeConnector) {
         // 4. SCROLL
         if (action === 'scroll') {
             const scrollScript = selector
-                ? `document.querySelector('${selector}').scrollTo(${coordinateX}, ${coordinateY})`
+                ? `document.querySelector('${escJS(selector)}').scrollTo(${coordinateX}, ${coordinateY})`
                 : `window.scrollTo(${coordinateX}, ${coordinateY})`;
             await Runtime.evaluate({ expression: scrollScript });
             await humanDelay();
@@ -129,9 +133,10 @@ export function createInteractionTools(connector: ChromeConnector) {
         // 5. WAIT
         if (action === 'wait') {
             if (!selector) throw new Error('Selector required for wait');
+            const safeSel = escJS(selector);
             const found = await waitFor(async () => {
                 const result = await Runtime.evaluate({
-                    expression: `document.querySelector('${selector}') !== null`
+                    expression: `document.querySelector('${safeSel}') !== null`
                 });
                 return result.result.value === true;
             }, timeoutMs);
@@ -146,7 +151,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Consolidated Extraction Tool
     {
       name: 'extract_element_data',
-      description: '📝 Extracts data from specific elements. ACTIONS: "text" (get text content), "attribute" (get html attribute like href/src). USE THIS for: scraping text, getting links, verifying content. COMBINES: get_text, get_attribute.',
+      description: 'Extract text content or HTML attributes from page elements using CSS selectors.',
       inputSchema: z.object({
         action: z.enum(['text', 'attribute']).describe('Extraction type'),
         selector: z.string().describe('CSS selector'),
@@ -159,9 +164,10 @@ export function createInteractionTools(connector: ChromeConnector) {
         const { Runtime } = client;
         await Runtime.enable();
 
+        const safeSel = escJS(selector);
         if (action === 'text') {
             const result: any = await Runtime.evaluate({
-                expression: `(function() { const el = document.querySelector('${selector}'); return el ? el.textContent.trim() : null; })()`
+                expression: `(function() { const el = document.querySelector('${safeSel}'); return el ? el.textContent.trim() : null; })()`
             });
             if (result.result.value === null) throw new Error(`Element not found: ${selector}`);
             return { success: true, text: result.result.value, selector };
@@ -169,8 +175,9 @@ export function createInteractionTools(connector: ChromeConnector) {
 
         if (action === 'attribute') {
             if (!attributeName) throw new Error('Attribute name required');
+            const safeAttr = escJS(attributeName);
             const result: any = await Runtime.evaluate({
-                expression: `(function() { const el = document.querySelector('${selector}'); return el ? el.getAttribute('${attributeName}') : {__error: 'not found'}; })()`,
+                expression: `(function() { const el = document.querySelector('${safeSel}'); return el ? el.getAttribute('${safeAttr}') : {__error: 'not found'}; })()`,
                 returnByValue: true
             });
             const val = result.result.value;
@@ -185,7 +192,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Execute JavaScript (Kept separate as it's a "Catch-all" for advanced usage)
     {
       name: 'execute_script',
-      description: '⚠️ Execute JavaScript in page. IMPORTANT: You MUST use "return" to get results. FOR ASYNC: Set awaitPromise=true. WARNING: Do NOT use fetch() for traffic replay (use resend_network_request). BEST PRACTICES: Use for complex DOM/events only.',
+      description: 'Execute JavaScript in the page context. Must include a return statement. Set awaitPromise=true for async code.',
       inputSchema: z.object({
         script: z.string().describe('JavaScript code to execute. MUST include "return" statement.'),
         tabId: z.string().optional().describe('Tab ID (optional)'),

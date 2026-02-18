@@ -49,7 +49,7 @@ const server = new Server(
   }
 );
 
-// 🎯 Category-based tool activation system
+// Category-based tool activation system
 let advancedToolsEnabled = false;
 
 // Core tools (always visible)
@@ -80,20 +80,20 @@ const advancedTools = [
 const controlTools: any[] = [
   {
     name: 'show_advanced_tools',
-    description: '🔓 UNLOCK ADVANCED TOOLS including resend_network_request for replaying captured packets. USE: After capturing traffic with capture_network_on_action, call this to unlock resend_network_request and 49 other advanced network/debugging tools. CRITICAL: You MUST call this before using resend_network_request!',
+    description: 'Unlock advanced tools: network interception, request replay, API mocking, WebSocket monitoring, HAR recording, accessibility, anti-detection, service workers, and more.',
     inputSchema: z.object({}),
     handler: async (): Promise<any> => {
       advancedToolsEnabled = true;
       
-      // 🔔 Send notification to update tool list
+      // Send notification to update tool list
       try {
         await server.notification({
           method: 'notifications/tools/list_changed',
           params: {}
         });
-        console.error('📢 Sent tool list update notification to client');
+        console.error('[MCP] Tool list update notification sent');
       } catch (e) {
-        console.error('⚠️ Could not send notification (client may not support it):', (e as Error).message);
+        console.error('[MCP] Could not send notification:', (e as Error).message);
       }
       
       return {
@@ -108,47 +108,30 @@ const controlTools: any[] = [
           'Anti-Detection & Stealth Mode',
           'Service Worker Control',
           'Global Script/CSS Injection'
-        ],
-        keyTools: [
-          'start_capturing_network_requests - Enable traffic capture',
-          'show_captured_network_traffic - List captured requests',
-          'resend_network_request - REPLAY CAPTURED PACKETS (use this!)',
-          'modify_network_request - Edit request before sending',
-          'block_network_request - Block/fail requests',
-          'enable_response_interception - Intercept responses',
-          'create_mock_endpoint - Mock API responses',
-          'start_har_recording - Record HAR files'
-        ],
-        hint: 'resend_network_request is NOW AVAILABLE - use it to replay captured traffic!',
-        nextStep: 'You can now use resend_network_request({ requestId }) to replay packets',
-        notification: '📢 Tool list updated - advanced tools now available'
+        ]
       };
     }
   },
   {
     name: 'hide_advanced_tools',
-    description: '🔒 Hide advanced tools to simplify tool list. USE: Return to smart workflow mode. Advanced tools become unavailable until show_advanced_tools is called again.',
+    description: 'Hide advanced tools to simplify the tool list. Call show_advanced_tools to unlock them again.',
     inputSchema: z.object({}),
     handler: async () => {
       advancedToolsEnabled = false;
       
-      // 🔔 Send notification to update tool list
       try {
         await server.notification({
           method: 'notifications/tools/list_changed',
           params: {}
         });
-        console.error('📢 Sent tool list update notification to client');
       } catch (e) {
-        console.error('⚠️ Could not send notification (client may not support it):', (e as Error).message);
+        console.error('[MCP] Could not send notification:', (e as Error).message);
       }
       
       return {
         success: true,
         message: 'Advanced tools hidden',
-        visibleToolsCount: coreTools.length + controlTools.length,
-        hint: 'Use show_advanced_tools to unlock them again',
-        notification: '📢 Tool list updated - advanced tools now hidden'
+        visibleToolsCount: coreTools.length + controlTools.length
       };
     }
   }
@@ -308,6 +291,42 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
   
   try {
+    // Auto-connect: ensure Chrome is available before tool execution
+    // Some tools don't need Chrome to be running
+    const noConnectionNeeded = [
+      'show_advanced_tools', 
+      'hide_advanced_tools',
+      'get_browser_status',
+      'close_browser'
+    ];
+    
+    if (!noConnectionNeeded.includes(name)) {
+      console.error(`[Tool Execution] ${name} - will call ensureConnected()`);
+      try {
+        await connector.ensureConnected();
+      } catch (e) {
+        const err = e as Error;
+        console.error('[Auto-connect] Failed:', err.message);
+        
+        // Return error to user instead of proceeding
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                success: false,
+                error: 'Chrome connection failed',
+                details: err.message,
+                tool: name,
+                hint: 'Chrome will auto-launch on tool use. If you see this error, Chrome may have failed to launch. Try: 1) Close all Chrome windows and retry, 2) Check if port 9222 is available, 3) Use launch_edge_with_profile as alternative'
+              }, null, 2),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
     // Validate arguments with Zod
     const validatedArgs = tool.inputSchema.parse(args || {});
     
@@ -344,53 +363,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Start server
 async function main() {
-  console.error('🚀 Custom Chrome MCP Server starting...');
-  console.error(`📡 CDP Port: ${PORT}`);
-  console.error('');
-  console.error('🎭 Playwright Integration Active!');
-  console.error('   Use "launch_chrome_with_profile" to start Chrome with your profile');
-  console.error('   This keeps all cookies, sessions, and extensions intact');
-  console.error('');
+  console.error('[MCP] Custom Chrome MCP Server starting...');
+  console.error(`[MCP] CDP Port: ${PORT}`);
+  console.error(`[MCP] ${coreTools.length + controlTools.length} core tools | ${advancedTools.length} advanced (hidden)`);
+  console.error('[MCP] Chrome will auto-launch on first tool use');
   
   try {
-    console.error('🔧 DEFAULT MODE: Simplified tool list');
-    console.error('');
-    console.error('📊 Visible by default:');
-    console.error(`  🎯 Smart Workflows (${createSmartWorkflowTools(connector).length} tools)`);
-    console.error(`  🎭 Browser Control (${createPlaywrightLauncherTools(connector).length + createNavigationTools(connector).length} tools)`);
-    console.error(`  🖱️  Interactions (${createInteractionTools(connector).length + createSessionTools(connector).length + createCaptureTools(connector).length} tools)`);
-    console.error(`  🔓 Control (2 tools) - show_advanced_tools, hide_advanced_tools`);
-    console.error('');
-    console.error(`✨ ${coreTools.length + controlTools.length} tools visible (${advancedTools.length} advanced tools hidden)`);
-    console.error('');
-    console.error('💡 AI can call "show_advanced_tools" to unlock:');
-    console.error('   • Network request/response interception');
-    console.error('   • API mocking & WebSocket monitoring');
-    console.error('   • HAR recording & replay');
-    console.error('   • Accessibility tree inspection');
-    console.error('   • Anti-detection & stealth mode');
-    console.error('   • Service worker control');
-    console.error('');
-    
-    // Auto-launch Chrome on startup
-    console.error('🚀 Auto-launching Chrome with Default profile...');
-    try {
-      const allToolsList = [...coreTools, ...controlTools, ...advancedTools];
-      const launchTool = allToolsList.find((t: any) => t.name === 'launch_chrome_with_profile');
-      if (launchTool?.handler) {
-        const launchPromise = launchTool.handler({ profileDirectory: 'Default' });
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Launch timeout after 15s')), 15000)
-        );
-        
-        await Promise.race([launchPromise, timeoutPromise]);
-        console.error('✅ Chrome launched successfully!');
-      }
-    } catch (error) {
-      console.error('⚠️ Auto-launch failed:', (error as Error).message);
-      console.error('   You can manually use "launch_chrome_with_profile" tool later');
-    }
-    console.error('');
     
     // Start MCP server with stdio transport
     const transport = new StdioServerTransport();
@@ -398,24 +376,20 @@ async function main() {
     
   } catch (error) {
     const err = error as Error;
-    console.error('❌ Failed to start server:', err.message);
-    console.error('');
-    console.error('💡 Server started but not connected to Chrome.');
-    console.error('   Use "launch_chrome_with_profile" tool to start Chrome with Playwright');
-    console.error('');
+    console.error('[MCP] Failed to start server:', err.message);
     process.exit(1);
   }
 }
 
 // Handle shutdown gracefully
 process.on('SIGINT', async () => {
-  console.error('\n🛑 Shutting down server...');
+  console.error('\n[MCP] Shutting down server...');
   await connector.disconnect();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-  console.error('\n🛑 Shutting down server...');
+  console.error('\n[MCP] Shutting down server...');
   await connector.disconnect();
   process.exit(0);
 });

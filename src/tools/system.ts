@@ -12,7 +12,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // List all Chrome targets (including extension service workers)
     {
       name: 'list_all_targets',
-      description: '🎯 Lists ALL Chrome execution contexts - pages, extensions, service workers, iframes, web workers. EXTENSION WORKFLOW: 1️⃣ list_all_targets (filter: service_worker) → 2️⃣ find your extension by title/url → 3️⃣ get its targetId → 4️⃣ connect_to_target → 5️⃣ execute_in_target to run code in extension. Use for: discovering extensions, finding SWs to debug, analyzing page structure, monitoring browser processes.',
+      description: 'List all Chrome execution contexts: pages, extensions, service workers, iframes, web workers.',
       inputSchema: z.object({
         filterType: z.enum(['all', 'service_worker', 'background_page', 'page', 'iframe', 'worker']).optional().describe('Filter by target type')
       }),
@@ -94,7 +94,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // Connect to a specific target (like extension service worker)
     {
       name: 'connect_to_target',
-      description: '🔌 Connects to specific Chrome target (extension SW, iframe, etc.). WORKFLOW: 1️⃣ list_all_targets to get targetId → 2️⃣ connect_to_target with that ID → 3️⃣ now you can execute_in_target to run code in that context. CRITICAL: After connecting, use execute_in_target (NOT execute_script) to run code. Use for: extension debugging, iframe inspection, background script access.',
+      description: 'Connect to a specific Chrome target (extension, iframe, service worker) by targetId.',
       inputSchema: z.object({
         targetId: z.string().describe('Target ID to connect to')
       }),
@@ -134,7 +134,7 @@ export function createSystemTools(connector: ChromeConnector) {
     // Execute code in a specific target
     {
       name: 'execute_in_target',
-      description: '⚙️ Executes JavaScript in specific target context (extension SW, iframe). USE THIS WHEN: 1️⃣ Debugging Chrome extensions (access chrome.runtime, chrome.tabs). 2️⃣ Interacting with iframe content. 3️⃣ Accessing service worker scope. PREREQUISITE: connect_to_target FIRST to get targetId. CRITICAL: Use this (NOT execute_script) for non-page contexts. Extensions: can access chrome.* APIs. Returns: result from target context.',
+      description: 'Execute JavaScript in a specific target context (extension, iframe, service worker). Must connect_to_target first.',
       inputSchema: z.object({
         targetId: z.string().describe('Target ID'),
         script: z.string().describe('JavaScript code to execute'),

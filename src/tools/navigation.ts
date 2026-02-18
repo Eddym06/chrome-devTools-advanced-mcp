@@ -11,7 +11,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Consolidated Browser Action Tool
     {
       name: 'browser_action',
-      description: '🌐 Controls basic browser navigation. USE THIS for: navigating, going back/forward, or reloading. Combines features of simple navigation. ACTIONS: "navigate" (go to URL), "back" (go back in history), "forward" (go forward), "reload" (refresh page).',
+      description: 'Control browser navigation: navigate to URL, go back/forward, or reload the page.',
       inputSchema: z.object({
         action: z.enum(['navigate', 'back', 'forward', 'reload']).describe('Action to perform'),
         url: z.string().optional().describe('URL to navigate to (REQUIRED for action="navigate")'),
@@ -117,7 +117,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Consolidated Tab Management Tool
     {
       name: 'manage_tabs',
-      description: '📑 Manages browser tabs. ACTIONS: "list" (show all), "create" (new tab), "close" (close tab), "switch" (focus tab), "get_url" (current URL). USE THIS instead of individual tools. ID required for close/switch.',
+      description: 'Manage browser tabs: list, create, close, switch, or get current URL. Tab ID required for close/switch.',
       inputSchema: z.object({
         action: z.enum(['list', 'create', 'close', 'switch', 'get_url']).describe('Action to perform'),
         url: z.string().optional().describe('URL for new tab (action="create")'),
@@ -163,7 +163,7 @@ export function createNavigationTools(connector: ChromeConnector) {
     // Wait for load state (Kept separate as it's a utility waiting tool)
     {
       name: 'wait_for_load_state',
-      description: '⏳ Waits for page to reach a specific state (load, networkidle, domcontentloaded). USE THIS WHEN: 1️⃣ After clicking a link/button that loads a new page. 2️⃣ After navigation to ensure page is ready. 3️⃣ When "get_html" returns incomplete content. STATES: "load" (default, page fully loaded), "domcontentloaded" (HTML ready), "networkidle" (no network activity for 500ms - useful for SPAs).',
+      description: 'Wait for page to reach a specific load state. Checks current readyState first, only waits for event if page has not reached the target state yet. States: load (fully loaded), domcontentloaded (HTML ready), networkidle (no network activity for 500ms).',
       inputSchema: z.object({
         state: z.enum(['load', 'domcontentloaded', 'networkidle']).default('load').describe('State to wait for'),
         timeout: z.number().default(30000).describe('Timeout in milliseconds'),
@@ -172,62 +172,74 @@ export function createNavigationTools(connector: ChromeConnector) {
       handler: async ({ state = 'load', timeout = 30000, tabId }: any) => {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
-        const { Page, Network } = client;
+        const { Page, Network, Runtime } = client;
         
         await Page.enable();
+        await Runtime.enable();
 
-        if (state === 'networkidle') {
-           await Network.enable();
-             // Primitive network idle implementation for CDP
-            await new Promise<void>((resolve, reject) => {
-                let pendingRequests = 0;
-                let lastRequestTime = Date.now();
-                let checkInterval: NodeJS.Timeout;
-                let timeoutId: NodeJS.Timeout;
+        // Check current readyState FIRST to avoid waiting for already-fired events
+        const readyStateResult: any = await Runtime.evaluate({
+          expression: 'document.readyState',
+          returnByValue: true
+        });
+        const currentState = readyStateResult.result?.value; // 'loading', 'interactive', 'complete'
 
-                const cleanup = () => {
-                    clearInterval(checkInterval);
-                    clearTimeout(timeoutId);
-                };
-
-                timeoutId = setTimeout(() => {
-                    cleanup();
-                    // Don't fail hard on network idle, just resolve with warning
-                    console.error('[wait_for_load_state] networkidle timeout, proceeding anyway');
-                    resolve();
-                }, timeout);
-
-                Network.requestWillBeSent(() => {
-                    pendingRequests++;
-                    lastRequestTime = Date.now();
-                });
-
-                const onRequestDone = () => {
-                    if (pendingRequests > 0) pendingRequests--;
-                    lastRequestTime = Date.now();
-                };
-
-                Network.loadingFinished(onRequestDone);
-                Network.loadingFailed(onRequestDone);
-
-                checkInterval = setInterval(() => {
-                    // Wait for 0 pending requests and 500ms of silence
-                    if (pendingRequests === 0 && (Date.now() - lastRequestTime) > 500) {
-                        cleanup();
-                        resolve();
-                    }
-                }, 100);
-            });
+        if (state === 'load') {
+          if (currentState === 'complete') {
+            return { success: true, message: 'Page already fully loaded (readyState: complete)' };
+          }
+          // Page not yet complete, wait for load event
+          await withTimeout(Page.loadEventFired(), timeout, 'Wait for load timed out');
         } else if (state === 'domcontentloaded') {
-           await withTimeout(Page.domContentEventFired(), timeout, 'Wait for domcontentloaded timed out');
-        } else {
-           // 'load' state
-           await withTimeout(Page.loadEventFired(), timeout, 'Wait for load timed out');
+          if (currentState === 'interactive' || currentState === 'complete') {
+            return { success: true, message: `Page already past DOMContentLoaded (readyState: ${currentState})` };
+          }
+          await withTimeout(Page.domContentEventFired(), timeout, 'Wait for domcontentloaded timed out');
+        } else if (state === 'networkidle') {
+          // For networkidle: if page is complete, just monitor for silence
+          await Network.enable();
+          await new Promise<void>((resolve) => {
+            let pendingRequests = 0;
+            let lastRequestTime = Date.now();
+            let checkInterval: NodeJS.Timeout;
+            let timeoutId: NodeJS.Timeout;
+
+            const cleanup = () => {
+              clearInterval(checkInterval);
+              clearTimeout(timeoutId);
+            };
+
+            timeoutId = setTimeout(() => {
+              cleanup();
+              console.error('[wait_for_load_state] networkidle timeout, proceeding');
+              resolve();
+            }, timeout);
+
+            Network.requestWillBeSent(() => {
+              pendingRequests++;
+              lastRequestTime = Date.now();
+            });
+
+            const onRequestDone = () => {
+              if (pendingRequests > 0) pendingRequests--;
+              lastRequestTime = Date.now();
+            };
+
+            Network.loadingFinished(onRequestDone);
+            Network.loadingFailed(onRequestDone);
+
+            checkInterval = setInterval(() => {
+              if (pendingRequests === 0 && (Date.now() - lastRequestTime) > 500) {
+                cleanup();
+                resolve();
+              }
+            }, 100);
+          });
         }
         
         return {
           success: true,
-          message: `Waited for state: ${state}`
+          message: `Page reached state: ${state}`
         };
       }
     },
