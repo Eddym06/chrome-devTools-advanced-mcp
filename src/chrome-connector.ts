@@ -309,28 +309,13 @@ export class ChromeConnector {
   private handleProcessDeath(): void {
     console.error('[Chrome] Cleaning up internal state...');
     
-    // Clear connection
-    if (this.connection) {
-      try {
-        this.connection.client.close().catch(() => {});
-      } catch (e) {}
-      this.connection = null;
-    }
-    
-    // Clear browser context
-    if (this.browserContext) {
-      try {
-        const browser = this.browserContext.browser();
-        if (browser) {
-          browser.close().catch(() => {});
-        }
-      } catch (e) {}
-      this.browserContext = null;
-    }
-    
-    // Clear process reference
+    // Don't call close() methods - Chrome is already dead
+    // Just clear references to avoid memory leaks
+    this.connection = null;
+    this.browserContext = null;
     this.chromeProcess = null;
     this.currentTabId = null;
+    this.persistentClients.clear();
     
     console.error('[Chrome] Internal state cleared. Ready for new launch.');
   }
