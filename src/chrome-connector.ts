@@ -65,7 +65,7 @@ export class ChromeConnector {
         
         if (!executable) {
             executable = commonPaths[0];
-            console.error('⚠️ Could not find Chrome in common locations. Using default:', executable);
+            console.error('[Chrome] Could not find Chrome in common locations. Using default:', executable);
         }
 
         return {
@@ -101,7 +101,7 @@ export class ChromeConnector {
       fs.mkdirSync(tempDir, { recursive: true });
     }
 
-    console.error(`👥 Creating Shadow Profile structure at: ${tempDir}`);
+    console.error(`[Chrome] Creating Shadow Profile at: ${tempDir}`);
     console.error(`   Platform: ${platform}`);
     console.error(`   Source: ${sourceUserData}`);
 
@@ -144,7 +144,7 @@ export class ChromeConnector {
       } catch (e: any) {
           // Robocopy exit codes: 0-7 are success/partial, 8+ is failure
           if (e.code > 7) {
-              console.error('⚠️ Shadow Profile copy had errors:', e.message);
+              console.error('[Chrome] Shadow Profile copy had errors:', e.message);
           }
       }
     } else {
@@ -154,9 +154,9 @@ export class ChromeConnector {
       
       try {
           await execAsync(cmd);
-          console.error('✅ Profile copied via rsync');
+          console.error('[Chrome] Profile copied via rsync');
       } catch (e: any) {
-          console.error('⚠️ Shadow Profile copy had errors:', e.message);
+          console.error('[Chrome] Shadow Profile copy had errors:', e.message);
       }
     }
     
@@ -168,54 +168,21 @@ export class ChromeConnector {
    * This is more robust for persistent profiles than Playwright's launcher
    */
   async launchWithProfile(options: LaunchOptions = {}): Promise<void> {
-    console.error(`[launchWithProfile] >>> CALLED AT: ${new Date().toISOString()}`);
-    console.error(`[launchWithProfile] Profile: ${options.profileDirectory || 'Default'}`);
-    console.error('[launchWithProfile] Stack trace:');
-    try {
-      throw new Error('STACK_TRACE');
-    } catch (e: any) {
-      console.error(e.stack.split('\n').slice(2, 8).join('\n'));
-    }
+    console.error(`[Chrome] launchWithProfile (profile: ${options.profileDirectory || 'Default'})`);
     
-    // 1. Check connections
+    // 1. Already connected? Skip.
     if (this.connection?.connected) {
-      console.error('✅ Already connected to a Chrome instance.');
+      console.error('[Chrome] Already connected, skipping launch.');
       return;
     }
 
+    // 2. Try to connect to existing Chrome on this port
     try {
-      // Check if port is open
       await this.connect();
-      console.error(`✅ Detected and connected to existing Chrome on port ${this.port}`);
-      
-      // CHECK: If connected but no pages are open, it might be a background process or invisible.
-      // We should try to ensure a window is visible.
-      const tabs = await this.listTabs();
-      const hasPages = tabs.some(t => t.type === 'page');
-      
-      if (!hasPages) {
-           console.error('⚠️ Connection active but no open pages found (possible background process). Opening new tab to ensure visibility...');
-           try {
-               await this.connection?.client.Target.createTarget({ url: 'about:blank' });
-           } catch (createErr) {
-               console.error('❌ Failed to create new target in existing instance:', createErr);
-           }
-      }
-
-      // Force activation of the first page to ensure window is visible/foreground
-      try {
-          const currentTabs = await this.listTabs();
-          const page = currentTabs.find(t => t.type === 'page');
-          if (page) {
-              await this.ensureWindowVisible(page.id); // NEW HELPER
-          }
-      } catch (activateErr) {
-          console.error('⚠️ Could not activate window:', activateErr);
-      }
-      
+      console.error(`[Chrome] Connected to existing Chrome on port ${this.port}`);
       return;
     } catch (e) {
-      // Port free, proceed
+      // Port not in use, proceed with launch
     }
     
     const platformPaths = this.getPlatformPaths();
@@ -236,17 +203,16 @@ export class ChromeConnector {
     // ONLY IF we are not already pointing to a custom dir (userDataDir was null/undefined originally)
     if (profileDirectory === 'Default' && !userDataDir) {
        try {
-           console.error("🔒 Default profile requested. Creating Shadow Copy to enable debugging...");
+           console.error("[Chrome] Default profile - creating shadow copy...");
            finalUserDataDir = await this.createShadowProfile(originalUserDataDir, profileDirectory);
        } catch (err) {
-           console.error("❌ Failed to create shadow profile, attempting raw launch (may fail):", err);
+           console.error("[Chrome] Shadow profile failed, trying raw launch:", (err as Error).message);
            finalUserDataDir = originalUserDataDir;
        }
     }
 
-    console.error(`🚀 Launching Chrome Native...`);
-    console.error(`   User Data: ${finalUserDataDir}`);
-    console.error(`   Profile: ${profileDirectory}`);
+    console.error(`[Chrome] Launching: ${executablePath}`);
+    console.error(`[Chrome] Profile: ${profileDirectory}, Port: ${this.port}`);
 
     const args = [
       `--remote-debugging-port=${this.port}`,
@@ -261,16 +227,10 @@ export class ChromeConnector {
       '--use-mock-keychain',
       '--password-store=basic'
     ];
-    
-    console.error(`   Args: ${JSON.stringify(args)}`);
 
-    // Use standard spawn with file logging for detachment + debug
+    // Use standard spawn with file logging
     const logFile = path.join(os.tmpdir(), 'chrome-mcp-debug.log');
-    
-    // Ensure we can write to log file
     try { fs.writeFileSync(logFile, ''); } catch(e){}
-    
-    console.error(`   Logging to: ${logFile}`);
 
     // Keep Chrome as a child process - it will survive as long as the MCP server is running
     const out = fs.openSync(logFile, 'a');
@@ -284,18 +244,16 @@ export class ChromeConnector {
 
     // Setup process death detection
     this.chromeProcess.on('exit', (code, signal) => {
-      console.error(`⚠️ Chrome process died (PID: ${this.chromeProcess?.pid}, code: ${code}, signal: ${signal})`);
+      console.error(`[Chrome] Process died (PID: ${this.chromeProcess?.pid}, code: ${code}, signal: ${signal})`);
       this.handleProcessDeath();
     });
 
-    this.chromeProcess.on('error', (err) => {
-      console.error(`⚠️ Chrome process error:`, err);
+    this.chromeProcess.on('error', (procErr) => {
+      console.error('[Chrome] Process error:', (procErr as Error).message);
       this.handleProcessDeath();
     });
 
-    // Don't call unref() - keep the process attached to the MCP server
-    
-    console.error(`✅ Chrome process spawned (PID: ${this.chromeProcess.pid})`);
+    console.error(`[Chrome] Process spawned (PID: ${this.chromeProcess.pid})`);
     
     // Close file descriptors after Chrome has started
     setTimeout(() => {
@@ -305,135 +263,43 @@ export class ChromeConnector {
       } catch(e) {}
     }, 5000);
     
-    // ENHANCED VERIFICATION SYSTEM
-    // Wait 3 seconds before starting verification
-    console.error('⏳ Waiting 3 seconds for Chrome to fully initialize...');
-    await new Promise(r => setTimeout(r, 3000));
+    // Wait for Chrome to initialize then connect via CDP with retries
+    console.error('[Chrome] Waiting for CDP...');
+    await new Promise(r => setTimeout(r, 2000));
     
-    // Step 1: Verify process is still running via system command
-    console.error('🔍 Step 1: Verifying Chrome process is running...');
-    
-    // Wait for Chrome to initialize
-    const waitTime = 3000;
-    console.error(`⏳ Waiting ${waitTime}ms for process to settle...`);
-    await new Promise(r => setTimeout(r, waitTime));
-    
-    // Verify process is still running
-    if (this.chromeProcess && this.chromeProcess.pid) {
-      try {
-        const platform = os.platform();
-        let processCheckCmd: string;
-        
-        if (platform === 'win32') {
-          processCheckCmd = `powershell -Command "Get-Process -Id ${this.chromeProcess.pid} -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -ExpandProperty ProcessName"`;
-        } else {
-          processCheckCmd = `ps -p ${this.chromeProcess.pid} -o comm=`;
-        }
-        
-        const { stdout } = await execAsync(processCheckCmd);
-        const processName = stdout.trim();
-        
-        if (processName) {
-          console.error(`✅ Process verified: ${processName} (PID: ${this.chromeProcess.pid})`);
-        } else {
-          throw new Error('Process not found in system');
-        }
-      } catch (procErr) {
-        throw new Error(`Chrome process verification failed: ${(procErr as Error).message}`);
-      }
-    }
-    
-    // Step 2: Verify port is listening
-    console.error(`🔍 Step 2: Verifying CDP port ${this.port} is listening...`);
-    try {
-      const platform = os.platform();
-      let portCheckCmd: string;
-      
-      if (platform === 'win32') {
-        portCheckCmd = `powershell -Command "netstat -ano | Select-String ':${this.port}' | Select-String 'LISTENING'"`;
-      } else {
-        portCheckCmd = `lsof -i :${this.port} | grep LISTEN || netstat -an | grep ${this.port}`;
-      }
-      
-      const { stdout: portOutput } = await execAsync(portCheckCmd);
-      
-      if (portOutput.trim()) {
-        console.error(`✅ Port ${this.port} is listening`);
-      } else {
-        throw new Error('Port not listening');
-      }
-    } catch (portErr) {
-      console.error(`⚠️ Port check inconclusive, proceeding with CDP connection test...`);
-    }
-    
-    // Step 3: Connect to CDP with retries
-    console.error('🔍 Step 3: Connecting to CDP...');
     let connected = false;
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 10; i++) {
         try {
             await this.connect();
             connected = true;
-            console.error(`✅ CDP connection established (attempt ${i+1})`);
+            console.error(`[Chrome] CDP connected (attempt ${i + 1})`);
             break;
         } catch (e) {
-            console.error(`   Attempt ${i+1}/8 failed. Retrying in 1s...`);
             await new Promise(r => setTimeout(r, 1000));
         }
     }
     
     if (!connected) {
-         let logs = 'Check log file';
-         try { logs = fs.readFileSync(logFile, 'utf8'); } catch(e){}
-         throw new Error(`Chrome process is running (PID ${this.chromeProcess!.pid}) but CDP port ${this.port} is not accessible after 15s. Logs: ${logs}`);
+         let logs = '';
+         try { logs = fs.readFileSync(logFile, 'utf8').substring(0, 500); } catch(e){}
+         throw new Error(`Chrome launched (PID ${this.chromeProcess!.pid}) but CDP port ${this.port} not accessible after 12s. ${logs}`);
     }
 
-    // Step 4: Verify browser is responsive (can list targets)
-    console.error('🔍 Step 4: Verifying browser responsiveness...');
+    // Verify browser is responsive
     try {
-      let targets = await this.listTabs();
-      console.error(`✅ Browser responsive: Found ${targets.length} targets`);
-      
-      if (targets.length === 0) {
-        console.error('⚠️ Warning: Browser running but no targets found. Creating initial tab...');
-        try {
-          await this.connection?.client.Target.createTarget({ url: 'about:blank' });
-          console.error('✅ Initial tab created');
-          targets = await this.listTabs(); // Refresh targets
-        } catch (createErr) {
-          console.error('⚠️ Could not create initial tab:', createErr);
-        }
-      }
-      
-      // Force activation of the first page to ensure window is visible/foreground
-      const page = targets.find(t => t.type === 'page');
-      if (page) {
-          try {
-              await this.ensureWindowVisible(page.id); // NEW HELPER
-              // Inject visual feedback (UX)
-              await this.injectConnectionStatus(page.id);
-          } catch (activateErr) {
-              console.error('⚠️ Could not activate window:', activateErr);
-          }
-      }
+      const targets = await this.listTabs();
+      console.error(`[Chrome] Ready: ${targets.length} targets on port ${this.port}`);
     } catch (verErr) {
-       console.error('⚠️ Warning: Could not verify targets listing:', verErr);
+       console.error('[Chrome] Warning: Could not list targets:', (verErr as Error).message);
     }
-    
-    console.error('');
-    console.error('🎉 Chrome launch verification complete!');
-    console.error(`   Process: Running (PID ${this.chromeProcess!.pid})`);
-    console.error(`   Port: ${this.port}`);
-    console.error(`   CDP: Connected`);
-    console.error(`   Status: Ready`);
 
-    // Optional: Try to attach Playwright over CDP for advanced features if needed
+    // Attach Playwright wrapper for advanced features
     try {
       const browser = await chromium.connectOverCDP(`http://localhost:${this.port}`);
-      // When connecting over CDP to a persistent profile, the default context is the first one
       this.browserContext = browser.contexts()[0]; 
-      console.error('✅ Playwright wrapper connected over CDP');
+      console.error('[Chrome] Playwright wrapper attached');
     } catch (pwError) {
-      console.error('⚠️ Could not attach Playwright wrapper (CDP still works):', (pwError as Error).message);
+      console.error('[Chrome] Playwright wrapper unavailable (CDP still works)');
     }
   }
 
@@ -441,7 +307,7 @@ export class ChromeConnector {
    * Handle Chrome process death - cleanup internal state
    */
   private handleProcessDeath(): void {
-    console.error('🧹 Cleaning up internal state due to Chrome process death...');
+    console.error('[Chrome] Cleaning up internal state...');
     
     // Clear connection
     if (this.connection) {
@@ -466,7 +332,7 @@ export class ChromeConnector {
     this.chromeProcess = null;
     this.currentTabId = null;
     
-    console.error('✅ Internal state cleared. Ready for new launch.');
+    console.error('[Chrome] Internal state cleared. Ready for new launch.');
   }
 
   /**
@@ -505,7 +371,7 @@ export class ChromeConnector {
         port: this.port
       };
 
-      console.error(`✅ Connected to Chrome on port ${this.port}`);
+      console.error(`[Chrome] Connected on port ${this.port}`);
     } catch (error) {
       const err = error as Error;
       throw new Error(
@@ -554,14 +420,6 @@ export class ChromeConnector {
    * Called automatically before every tool invocation.
    */
   async ensureConnected(): Promise<void> {
-    console.error(`[ensureConnected] >>> CALLED AT: ${new Date().toISOString()}`);
-    console.error('[ensureConnected] Stack trace:');
-    try {
-      throw new Error('STACK_TRACE');
-    } catch (e: any) {
-      console.error(e.stack.split('\n').slice(2, 8).join('\n'));
-    }
-    
     // Already connected - verify it's still alive
     if (this.connection?.connected) {
       try {
@@ -628,7 +486,7 @@ export class ChromeConnector {
       if (!targets || targets.length === 0) {
         throw new Error('Chrome CDP is accessible but no targets found');
       }
-      console.error(`✅ Connection verified: ${targets.length} targets on port ${this.port}`);
+      console.error(`[Chrome] Connection verified: ${targets.length} targets on port ${this.port}`);
     } catch (error) {
       const err = error as Error;
       // Connection is dead - clean up
@@ -854,7 +712,7 @@ export class ChromeConnector {
                     if(existing) existing.remove();
                     const div = document.createElement('div');
                     div.id = id;
-                    div.innerHTML = "🤖 MCP Agent Conectado";
+                    div.innerHTML = "MCP Agent Connected";
                     div.style = "position:fixed;bottom:20px;right:20px;background:#22c55e;color:white;padding:12px 24px;z-index:2147483647;border-radius:8px;font-family:system-ui,sans-serif;font-weight:bold;box-shadow:0 4px 12px rgba(0,0,0,0.15);transition:opacity 0.5s ease;pointer-events:none;";
                     document.body.appendChild(div);
                     setTimeout(() => { 
@@ -877,7 +735,7 @@ export class ChromeConnector {
         
         // 1. Activate using Target domain
         await client.Target.activateTarget({ targetId });
-        console.error('✅ Target activated');
+        console.error('[Chrome] Target activated');
 
         // 2. Try to get window state using Browser domain (if supported)
         try {
@@ -889,26 +747,26 @@ export class ChromeConnector {
                                 (bounds.top !== undefined && bounds.top < 0);
                                 
             if (isOffScreen) {
-                console.error('⚠️ Window detected off-screen. Recentering...');
+                console.error('[Chrome] Window detected off-screen. Recentering...');
                 await client.Browser.setWindowBounds({ 
                     windowId, 
                     bounds: { left: 100, top: 100, width: 1280, height: 720, windowState: 'normal' } 
                 });
-                console.error('✅ Window recentered');
+                console.error('[Chrome] Window recentered');
             } else if (bounds.windowState === 'minimized' || bounds.windowState === 'hidden') {
-                console.error(`⚠️ Window is ${bounds.windowState}, restoring...`);
+                console.error(`[Chrome] Window is ${bounds.windowState}, restoring...`);
                 await client.Browser.setWindowBounds({ 
                     windowId, 
                     bounds: { windowState: 'normal' } 
                 });
-                console.error('✅ Window restored to normal state');
+                console.error('[Chrome] Window restored to normal state');
             } else {
                 // If it's already normal/maximized/fullscreen, still good to ensure focus
                 console.error(`Status: Window state is '${bounds.windowState}'`);
             }
         } catch (browserErr) {
             // Browser domain might not be fully supported in all versions or contexts
-            console.error('⚠️ Could not check window state via Browser domain (optional):', (browserErr as Error).message);
+            console.error('[Chrome] Could not check window state via Browser domain:', (browserErr as Error).message);
         }
 
         // 3. Fallback: Windows specific PowerShell to force window to front
@@ -939,15 +797,15 @@ export class ChromeConnector {
                  try {
                      // We use execAsync to run the powershell command
                      await execAsync(`powershell -Command "${psCmd}"`);
-                     console.error('✅ Windows API Activate executed (Foreground Forced)');
+                     console.error('[Chrome] Windows API Activate executed');
                  } catch (psErr) {
-                     console.error('⚠️ Windows API Activate failed:', (psErr as Error).message);
+                     console.error('[Chrome] Windows API Activate failed:', (psErr as Error).message);
                  }
              }
         }
         
     } catch (e) {
-        console.error('⚠️ Ensure Window Visible failed:', (e as Error).message);
+        console.error('[Chrome] Ensure Window Visible failed:', (e as Error).message);
     }
   }
 }

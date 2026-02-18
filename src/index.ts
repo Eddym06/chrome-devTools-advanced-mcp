@@ -284,6 +284,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
   
+  console.error(`[Tool] ${name}`);
+  
   const tool = allToolsMap.get(name);
   
   if (!tool) {
@@ -301,7 +303,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     ];
     
     if (!noConnectionNeeded.includes(name)) {
-      console.error(`[Tool Execution] ${name} - will call ensureConnected()`);
       try {
         await connector.ensureConnected();
       } catch (e) {
