@@ -337,10 +337,53 @@ export class ChromeConnector {
     }
     
     if (this.chromeProcess) {
-      // optional: kill process? usually we just disconnect
-      // this.chromeProcess.kill(); 
       this.chromeProcess = null;
     }
+  }
+
+  /**
+   * Kill the Chrome process entirely. Only called by the close_browser tool.
+   * No other code path should terminate Chrome.
+   */
+  async killChrome(): Promise<{ killed: boolean; message: string }> {
+    const pid = this.chromeProcess?.pid;
+    const wasConnected = this.connection?.connected ?? false;
+
+    // Close CDP client first
+    if (this.connection) {
+      try { await this.connection.client.close(); } catch (e) {}
+      this.connection = null;
+    }
+
+    // Detach Playwright wrapper
+    if (this.browserContext) {
+      try { await this.browserContext.browser()?.close(); } catch (e) {}
+      this.browserContext = null;
+    }
+
+    // Kill the OS process
+    if (this.chromeProcess) {
+      try {
+        this.chromeProcess.kill('SIGKILL');
+      } catch (e) {
+        // already dead
+      }
+      this.chromeProcess = null;
+    }
+
+    this.currentTabId = null;
+    this.persistentClients.clear();
+
+    if (pid) {
+      console.error(`[Chrome] Killed process PID ${pid}`);
+      return { killed: true, message: `Chrome (PID ${pid}) terminated successfully.` };
+    }
+
+    if (wasConnected) {
+      return { killed: true, message: 'Chrome CDP connection closed (external process, OS process not killed).' };
+    }
+
+    return { killed: false, message: 'No Chrome instance was running.' };
   }
 
   /**
@@ -440,7 +483,10 @@ export class ChromeConnector {
     console.error('[Auto-connect] Launching Chrome with Default profile...');
     try {
       await this.launchWithProfile({ profileDirectory: 'Default' });
-      console.error('[Auto-connect] Chrome launched successfully');
+      // Extra wait for Chrome to fully render, resize and settle before the tool runs
+      console.error('[Auto-connect] Chrome launched. Waiting for window to settle...');
+      await new Promise(r => setTimeout(r, 3000));
+      console.error('[Auto-connect] Chrome ready for tool execution.');
     } catch (launchErr) {
       const err = launchErr as Error;
       console.error('[Auto-connect] Failed to launch Chrome:', err.message);
@@ -462,7 +508,7 @@ export class ChromeConnector {
   async verifyConnection(): Promise<void> {
     // Check if we think we're connected
     if (!this.connection?.connected) {
-      throw new Error('Not connected to Chrome. Launch Chrome first using launch_chrome_with_profile.');
+      throw new Error('Not connected to Chrome. A tool invocation should have auto-launched it - check the connection.');
     }
 
     // Verify port is actually accessible

@@ -68,23 +68,12 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
     
     {
       name: 'close_browser',
-      description: 'Close the Playwright-managed browser and release all connections. Only works for browsers launched by this MCP.',
+      description: 'Close Google Chrome and release all connections. This is the ONLY tool that can close Chrome. Use this to fully stop Chrome before relaunching with a fresh session.',
       inputSchema: z.object({}),
       handler: async () => {
         try {
-          if (!connector.isPlaywrightManaged()) {
-            return {
-              success: false,
-              message: 'No Playwright-managed browser to close'
-            };
-          }
-          
-          await connector.disconnect();
-          
-          return {
-            success: true,
-            message: 'Browser closed successfully'
-          };
+          const result = await connector.killChrome();
+          return { success: result.killed, message: result.message };
         } catch (error) {
           return {
             success: false,
