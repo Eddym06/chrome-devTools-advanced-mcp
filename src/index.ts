@@ -331,8 +331,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Validate arguments with Zod
     const validatedArgs = tool.inputSchema.parse(args || {});
     
-    // Execute tool handler
-    const result = await tool.handler(validatedArgs);
+    // Execute tool handler with a global timeout safety net
+    const TOOL_TIMEOUT_MS = 90_000;
+    const result = await Promise.race([
+      tool.handler(validatedArgs),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${TOOL_TIMEOUT_MS / 1000}s. The browser may be unresponsive.`)), TOOL_TIMEOUT_MS)
+      )
+    ]);
     
     return {
       content: [

@@ -74,10 +74,15 @@ export function createNavigationTools(connector: ChromeConnector) {
                 loadPromise = Page.loadEventFired();
             }
 
-            const navResponse = await Page.navigate({ url: targetUrl });
+            // Wrap Page.navigate() itself - it can hang if CDP connection is broken
+            const navResponse = await withTimeout(
+              Page.navigate({ url: targetUrl }),
+              timeout,
+              `Page.navigate command timed out for ${targetUrl}`
+            ) as { errorText?: string };
             if (navResponse.errorText) throw new Error(`Navigation failed: ${navResponse.errorText}`);
             
-            await withTimeout(loadPromise, timeout, `Timeout waiting for ${waitUntil}`);
+            await withTimeout(loadPromise, timeout, `Timeout waiting for ${waitUntil} on ${targetUrl}`);
             await humanDelay();
             return { success: true, message: `Navigated to ${targetUrl}` };
         }
@@ -105,8 +110,9 @@ export function createNavigationTools(connector: ChromeConnector) {
         }
 
         if (action === 'reload') {
+            const reloadPromise = Page.loadEventFired();
             await Page.reload({ ignoreCache: false });
-            await Page.loadEventFired();
+            await withTimeout(reloadPromise, timeout, 'Timeout waiting for reload to complete');
             return { success: true, message: 'Page reloaded' };
         }
 

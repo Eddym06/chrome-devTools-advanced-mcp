@@ -225,7 +225,9 @@ export class ChromeConnector {
       '--disable-infobars',
       '--exclude-switches=enable-automation',
       '--use-mock-keychain',
-      '--password-store=basic'
+      '--password-store=basic',
+      '--new-window',          // Force a visible window on launch
+      '--start-maximized'      // Open maximized so it is clearly visible
     ];
 
     // Use standard spawn with file logging
