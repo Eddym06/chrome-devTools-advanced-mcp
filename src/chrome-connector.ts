@@ -40,7 +40,7 @@ export class ChromeConnector {
   private port: number;
   private currentTabId: string | null = null;
   private browserContext: BrowserContext | null = null;
-  private chromeProcess: ChildProcess | null = null;
+  private chromePid: number | null = null; // PID of the detached Chrome process
   private persistentClients: Map<string, any> = new Map(); // Persistent clients for interceptors
 
   constructor(port: number = 9222) {
@@ -237,41 +237,19 @@ export class ChromeConnector {
     const out = fs.openSync(logFile, 'a');
     const err = fs.openSync(logFile, 'a');
 
-    this.chromeProcess = spawn(executablePath, args, {
-      detached: false,  // Keep as child
+    this.chromePid = null; // Clear any old PID
+
+    const child = spawn(executablePath, args, {
+      detached: true,   // Chrome runs independently of the MCP server
       stdio: ['ignore', out, err],
       windowsHide: false
     });
 
-    // Setup process death detection
-    this.chromeProcess.on('exit', async (code, signal) => {
-      console.error(`[Chrome] Spawned process exited (PID: ${this.chromeProcess?.pid}, code: ${code}, signal: ${signal})`);
-      
-      // Chrome sometimes exits the launcher process but keeps running under a different PID
-      // (e.g. when delegating to an existing instance, or when the initial process forks).
-      // Before wiping the connection, check if CDP is still reachable.
-      await new Promise(r => setTimeout(r, 500)); // brief wait for any fork to settle
-      try {
-        const targets = await CDP.List({ port: this.port });
-        if (targets && targets.length > 0) {
-          // CDP is alive - just null out the dead process reference, keep connection
-          console.error('[Chrome] Process exited but CDP still running - keeping connection.');
-          this.chromeProcess = null;
-          return;
-        }
-      } catch (_) {
-        // CDP not reachable - Chrome is truly dead
-      }
-      console.error('[Chrome] CDP gone after process exit - cleaning up.');
-      this.handleProcessDeath();
-    });
+    this.chromePid = child.pid ?? null;
+    console.error(`[Chrome] Process spawned (PID: ${this.chromePid})`);
 
-    this.chromeProcess.on('error', (procErr) => {
-      console.error('[Chrome] Process error:', (procErr as Error).message);
-      this.handleProcessDeath();
-    });
-
-    console.error(`[Chrome] Process spawned (PID: ${this.chromeProcess.pid})`);
+    // Detach from Node.js - Chrome survives even if MCP restarts
+    child.unref();
     
     // Close file descriptors after Chrome has started
     setTimeout(() => {
@@ -300,7 +278,7 @@ export class ChromeConnector {
     if (!connected) {
          let logs = '';
          try { logs = fs.readFileSync(logFile, 'utf8').substring(0, 500); } catch(e){}
-         throw new Error(`Chrome launched (PID ${this.chromeProcess!.pid}) but CDP port ${this.port} not accessible after 12s. ${logs}`);
+         throw new Error(`Chrome launched (PID ${this.chromePid}) but CDP port ${this.port} not accessible after 12s. ${logs}`);
     }
 
     // Verify browser is responsive
@@ -331,7 +309,7 @@ export class ChromeConnector {
     // Just clear references to avoid memory leaks
     this.connection = null;
     this.browserContext = null;
-    this.chromeProcess = null;
+    this.chromePid = null;
     this.currentTabId = null;
     this.persistentClients.clear();
     
@@ -354,9 +332,7 @@ export class ChromeConnector {
       console.error('Closed Playwright context');
     }
     
-    if (this.chromeProcess) {
-      this.chromeProcess = null;
-    }
+    this.chromePid = null;
   }
 
   /**
@@ -364,7 +340,7 @@ export class ChromeConnector {
    * No other code path should terminate Chrome.
    */
   async killChrome(): Promise<{ killed: boolean; message: string }> {
-    const pid = this.chromeProcess?.pid;
+    const pid = this.chromePid;
     const wasConnected = this.connection?.connected ?? false;
 
     // Close CDP client first
@@ -373,32 +349,45 @@ export class ChromeConnector {
       this.connection = null;
     }
 
-    // Detach Playwright wrapper
-    if (this.browserContext) {
-      try { await this.browserContext.browser()?.close(); } catch (e) {}
-      this.browserContext = null;
-    }
-
-    // Kill the OS process
-    if (this.chromeProcess) {
-      try {
-        this.chromeProcess.kill('SIGKILL');
-      } catch (e) {
-        // already dead
-      }
-      this.chromeProcess = null;
-    }
+    // Detach Playwright wrapper (do NOT call browser.close() - that sends Browser.close to CDP)
+    this.browserContext = null;
 
     this.currentTabId = null;
     this.persistentClients.clear();
 
+    // Kill the OS process using platform command (reliable for detached processes)
     if (pid) {
-      console.error(`[Chrome] Killed process PID ${pid}`);
-      return { killed: true, message: `Chrome (PID ${pid}) terminated successfully.` };
+      try {
+        if (os.platform() === 'win32') {
+          await execAsync(`taskkill /F /T /PID ${pid}`);
+        } else {
+          await execAsync(`kill -9 ${pid}`);
+        }
+        console.error(`[Chrome] Killed process tree PID ${pid}`);
+      } catch (e) {
+        // Process might already be dead
+        console.error(`[Chrome] Process PID ${pid} may already be dead.`);
+      }
+      this.chromePid = null;
+      return { killed: true, message: `Chrome (PID ${pid}) terminated.` };
     }
 
+    // No stored PID - try to find and kill Chrome on our port
     if (wasConnected) {
-      return { killed: true, message: 'Chrome CDP connection closed (external process, OS process not killed).' };
+      try {
+        // Get PID from Chrome's CDP version endpoint
+        const version = await CDP.Version({ port: this.port });
+        if (version && (version as any).webSocketDebuggerUrl) {
+          // Try to kill via Browser.close CDP command
+          const client = await CDP({ port: this.port });
+          await client.Browser.close();
+          client.close();
+          return { killed: true, message: 'Chrome closed via CDP Browser.close command.' };
+        }
+      } catch (e) {
+        // CDP already gone
+      }
+      return { killed: true, message: 'Chrome CDP connection cleared.' };
     }
 
     return { killed: false, message: 'No Chrome instance was running.' };
@@ -820,7 +809,7 @@ export class ChromeConnector {
 
         // 3. Fallback: Windows specific PowerShell to force window to front
         if (os.platform() === 'win32') {
-             let pid = this.chromeProcess?.pid;
+             let pid = this.chromePid;
              
              // If we don't have PID (we connected to existing instance), try to get it via CDP SystemInfo
              if (!pid) {
