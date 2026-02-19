@@ -226,7 +226,6 @@ export class ChromeConnector {
       '--exclude-switches=enable-automation',
       '--use-mock-keychain',
       '--password-store=basic',
-      '--new-window',          // Force a visible window on launch
       '--start-maximized'      // Open maximized so it is clearly visible
     ];
 
@@ -245,8 +244,25 @@ export class ChromeConnector {
     });
 
     // Setup process death detection
-    this.chromeProcess.on('exit', (code, signal) => {
-      console.error(`[Chrome] Process died (PID: ${this.chromeProcess?.pid}, code: ${code}, signal: ${signal})`);
+    this.chromeProcess.on('exit', async (code, signal) => {
+      console.error(`[Chrome] Spawned process exited (PID: ${this.chromeProcess?.pid}, code: ${code}, signal: ${signal})`);
+      
+      // Chrome sometimes exits the launcher process but keeps running under a different PID
+      // (e.g. when delegating to an existing instance, or when the initial process forks).
+      // Before wiping the connection, check if CDP is still reachable.
+      await new Promise(r => setTimeout(r, 500)); // brief wait for any fork to settle
+      try {
+        const targets = await CDP.List({ port: this.port });
+        if (targets && targets.length > 0) {
+          // CDP is alive - just null out the dead process reference, keep connection
+          console.error('[Chrome] Process exited but CDP still running - keeping connection.');
+          this.chromeProcess = null;
+          return;
+        }
+      } catch (_) {
+        // CDP not reachable - Chrome is truly dead
+      }
+      console.error('[Chrome] CDP gone after process exit - cleaning up.');
       this.handleProcessDeath();
     });
 
