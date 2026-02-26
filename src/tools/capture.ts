@@ -27,9 +27,9 @@ export function createCaptureTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Page } = client;
-        
+
         await Page.enable();
-        
+
         // Ensure page is rendered
         await new Promise(r => setTimeout(r, 200));
 
@@ -37,7 +37,7 @@ export function createCaptureTools(connector: ChromeConnector) {
           format,
           quality: format === 'jpeg' ? quality : undefined
         };
-        
+
         // Handle clip area or full page
         if (clipX !== undefined && clipY !== undefined && clipWidth && clipHeight) {
           options.clip = {
@@ -48,55 +48,55 @@ export function createCaptureTools(connector: ChromeConnector) {
             scale: 1
           };
         } else if (fullPage) {
-           // For robust full page screenshot, we need layout metrics
-           try {
-             const metrics = await Page.getLayoutMetrics();
-             const cssContentSize = metrics.cssContentSize || metrics.contentSize;
-             
-             if (cssContentSize) {
-                options.clip = {
-                  x: 0,
-                  y: 0,
-                  width: Math.ceil(cssContentSize.width),
-                  height: Math.ceil(cssContentSize.height),
-                  scale: 1
-                };
-                options.captureBeyondViewport = true;
-                options.fromSurface = true;
-             } else {
-                console.warn('[Screenshot] Could not get content size for full page, falling back to basic mode');
-                options.captureBeyondViewport = true;
-             }
-           } catch (e) {
-             console.error('[Screenshot] Error getting layout metrics:', e);
-             options.captureBeyondViewport = true;
-           }
+          // For robust full page screenshot, we need layout metrics
+          try {
+            const metrics = await Page.getLayoutMetrics();
+            const cssContentSize = metrics.cssContentSize || metrics.contentSize;
+
+            if (cssContentSize) {
+              options.clip = {
+                x: 0,
+                y: 0,
+                width: Math.ceil(cssContentSize.width),
+                height: Math.ceil(cssContentSize.height),
+                scale: 1
+              };
+              options.captureBeyondViewport = true;
+              options.fromSurface = true;
+            } else {
+              console.warn('[Screenshot] Could not get content size for full page, falling back to basic mode');
+              options.captureBeyondViewport = true;
+            }
+          } catch (e) {
+            console.error('[Screenshot] Error getting layout metrics:', e);
+            options.captureBeyondViewport = true;
+          }
         }
-        
+
         // Capture screenshot with timeout
         console.error(`[Screenshot] capturing ${fullPage ? 'full page' : 'viewport'}...`);
         let screenshot;
-        
+
         try {
-           // 10 second timeout for screenshots
-           const result = await new Promise<any>((resolve, reject) => {
-              const timeout = setTimeout(() => reject(new Error('Screenshot timed out after 10s')), 10000);
-              Page.captureScreenshot(options)
-                .then((res: any) => {
-                  clearTimeout(timeout);
-                  resolve(res);
-                })
-                .catch((err: any) => {
-                  clearTimeout(timeout);
-                  reject(err);
-                });
-           });
-           screenshot = result;
+          // 10 second timeout for screenshots
+          const result = await new Promise<any>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('Screenshot timed out after 10s')), 10000);
+            Page.captureScreenshot(options)
+              .then((res: any) => {
+                clearTimeout(timeout);
+                resolve(res);
+              })
+              .catch((err: any) => {
+                clearTimeout(timeout);
+                reject(err);
+              });
+          });
+          screenshot = result;
         } catch (error: any) {
-           console.error('[Screenshot] Failed:', error);
-           throw new Error(`Screenshot failed: ${error.message}`);
+          console.error('[Screenshot] Failed:', error);
+          throw new Error(`Screenshot failed: ${error.message}`);
         }
-        
+
         return {
           success: true,
           format,
@@ -120,11 +120,11 @@ export function createCaptureTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Runtime } = client;
-        
+
         await Runtime.enable();
-        
+
         let expression;
-        
+
         if (selector) {
           const safeSelector = escJS(selector);
           expression = `(function() {
@@ -133,23 +133,23 @@ export function createCaptureTools(connector: ChromeConnector) {
             return ${outerHTML ? 'el.outerHTML' : 'el.innerHTML'};
           })()`;
         } else {
-          expression = outerHTML 
+          expression = outerHTML
             ? 'document.documentElement.outerHTML'
             : 'document.documentElement.innerHTML';
         }
-        
+
         const result: any = await Runtime.evaluate({
           expression,
           returnByValue: true
         });
 
         if (result.exceptionDetails) {
-            console.error('[Get HTML] Runtime error:', result.exceptionDetails);
-            throw new Error(`Get HTML failed: ${result.exceptionDetails.exception?.description || 'Unknown runtime error'}`);
+          console.error('[Get HTML] Runtime error:', result.exceptionDetails);
+          throw new Error(`Get HTML failed: ${result.exceptionDetails.exception?.description || 'Unknown runtime error'}`);
         }
-        
+
         let htmlContent = result.result.value || '';
-        
+
         if (htmlContent === 'ELEMENT_NOT_FOUND') {
           return {
             success: false,
@@ -159,7 +159,7 @@ export function createCaptureTools(connector: ChromeConnector) {
         }
 
         const truncated = truncateOutput(htmlContent, 50000, 'html');
-        
+
         return {
           success: true,
           selector: selector || 'full-page',
@@ -187,21 +187,21 @@ export function createCaptureTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Page } = client;
-        
+
         await Page.enable();
-        
+
         const options: any = {
           landscape,
           displayHeaderFooter,
           printBackground,
           scale
         };
-        
+
         if (paperWidth) options.paperWidth = paperWidth;
         if (paperHeight) options.paperHeight = paperHeight;
-        
+
         const { data } = await Page.printToPDF(options);
-        
+
         return {
           success: true,
           data,
@@ -222,11 +222,11 @@ export function createCaptureTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Page } = client;
-        
+
         await Page.enable();
-        
+
         const metrics = await Page.getLayoutMetrics();
-        
+
         return {
           success: true,
           metrics: {
@@ -241,7 +241,7 @@ export function createCaptureTools(connector: ChromeConnector) {
     // Get accessibility tree
     {
       name: 'get_accessibility_tree',
-      description: 'Get the accessibility tree of the page',
+      description: 'Get the accessibility tree of the page (ARIA roles, labels, interactive elements).',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
@@ -249,16 +249,23 @@ export function createCaptureTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Accessibility } = client;
-        
-        await Accessibility.enable();
-        
-        const { nodes } = await Accessibility.getFullAXTree();
-        
-        return {
-          success: true,
-          nodeCount: nodes.length,
-          nodes: nodes.slice(0, 100) // Limit to first 100 nodes
-        };
+
+        try {
+          await Accessibility.enable();
+          const { nodes } = await Accessibility.getFullAXTree();
+          return {
+            success: true,
+            nodeCount: nodes.length,
+            nodes: nodes.slice(0, 100) // Limit to first 100 nodes
+          };
+        } catch (err: any) {
+          // Some Chrome builds or remote debug modes don't support Accessibility domain
+          return {
+            success: false,
+            error: `Accessibility domain not available: ${err.message}`,
+            hint: 'Try using get_html to inspect the DOM structure instead.'
+          };
+        }
       }
     }
   ];

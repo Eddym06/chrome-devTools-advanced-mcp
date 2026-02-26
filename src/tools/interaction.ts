@@ -12,7 +12,7 @@ export function createInteractionTools(connector: ChromeConnector) {
     // Consolidated Interaction Tool
     {
       name: 'perform_interaction',
-description: 'Interact with page elements: click, type into inputs, select dropdown options, scroll, or wait for selector. Use get_html first to verify selectors.',
+      description: 'Interact with page elements: click, type into inputs, select dropdown options, scroll, or wait for selector. Use get_html first to verify selectors.',
       inputSchema: z.object({
         action: z.enum(['click', 'type', 'select', 'scroll', 'wait']).describe('Action to perform'),
         selector: z.string().describe('CSS selector (Required for click, type, select, wait. Optional for scroll)'),
@@ -27,28 +27,28 @@ description: 'Interact with page elements: click, type into inputs, select dropd
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Runtime, DOM } = client;
-        
+
         await Runtime.enable();
         await DOM.enable();
 
         // 1. CLICK
         if (action === 'click') {
-            if (!selector) throw new Error('Selector required for click');
-            
-            const safeSelector = escJS(selector);
-            // Wait for selector first
-            const found = await waitFor(async () => {
-                const result = await Runtime.evaluate({
-                    expression: `document.querySelector('${safeSelector}') !== null`
-                });
-                return result.result.value === true;
-            }, timeoutMs);
-            if (!found) throw new Error(`Selector not found: ${selector}`);
+          if (!selector) throw new Error('Selector required for click');
 
-            await humanDelay(100, 300);
+          const safeSelector = escJS(selector);
+          // Wait for selector first
+          const found = await waitFor(async () => {
+            const result = await Runtime.evaluate({
+              expression: `document.querySelector('${safeSelector}') !== null`
+            });
+            return result.result.value === true;
+          }, timeoutMs);
+          if (!found) throw new Error(`Selector not found: ${selector}`);
 
-            const result: any = await withTimeout(Runtime.evaluate({
-                expression: `
+          await humanDelay(100, 300);
+
+          const result: any = await withTimeout(Runtime.evaluate({
+            expression: `
                     (function() {
                         const el = document.querySelector('${safeSelector}');
                         if (!el) throw new Error('Element not found');
@@ -57,23 +57,23 @@ description: 'Interact with page elements: click, type into inputs, select dropd
                         return true;
                     })()
                 `,
-                awaitPromise: true
-            }), timeoutMs, 'Click action timed out');
+            awaitPromise: true
+          }), timeoutMs, 'Click action timed out');
 
-            if (result.exceptionDetails) {
-                 throw new Error(`Click failed: ${result.exceptionDetails.exception?.description}`);
-            }
-            await humanDelay();
-            return { success: true, message: `Clicked ${selector}` };
+          if (result.exceptionDetails) {
+            throw new Error(`Click failed: ${result.exceptionDetails.exception?.description}`);
+          }
+          await humanDelay();
+          return { success: true, message: `Clicked ${selector}` };
         }
 
         // 2. TYPE
         if (action === 'type') {
-            if (!selector) throw new Error('Selector required for type');
-            if (text === undefined) throw new Error('Text required for type');
+          if (!selector) throw new Error('Selector required for type');
+          if (text === undefined) throw new Error('Text required for type');
 
-            const safeSel = escJS(selector);
-            const script = `
+          const safeSel = escJS(selector);
+          const script = `
                 (async function() {
                     const el = document.querySelector('${safeSel}');
                     if (!el) throw new Error('Element not found');
@@ -90,23 +90,23 @@ description: 'Interact with page elements: click, type into inputs, select dropd
                     return true;
                 })()
             `;
-            
-            const result: any = await withTimeout(Runtime.evaluate({ expression: script, awaitPromise: true }), timeoutMs, 'Type action timed out');
-            if (result.exceptionDetails) throw new Error(`Type failed: ${result.exceptionDetails.exception?.description}`);
-            
-            await humanDelay();
-            return { success: true, message: `Typed "${text}" into ${selector}` };
+
+          const result: any = await withTimeout(Runtime.evaluate({ expression: script, awaitPromise: true }), timeoutMs, 'Type action timed out');
+          if (result.exceptionDetails) throw new Error(`Type failed: ${result.exceptionDetails.exception?.description}`);
+
+          await humanDelay();
+          return { success: true, message: `Typed "${text}" into ${selector}` };
         }
 
         // 3. SELECT
         if (action === 'select') {
-             if (!selector) throw new Error('Selector required for select');
-             if (value === undefined) throw new Error('Value required for select');
+          if (!selector) throw new Error('Selector required for select');
+          if (value === undefined) throw new Error('Value required for select');
 
-             const safeSel = escJS(selector);
-             const safeVal = escJS(value);
-             await Runtime.evaluate({
-                expression: `
+          const safeSel = escJS(selector);
+          const safeVal = escJS(value);
+          await Runtime.evaluate({
+            expression: `
                     (function() {
                         const select = document.querySelector('${safeSel}');
                         if (!select) throw new Error('Select element not found');
@@ -115,33 +115,33 @@ description: 'Interact with page elements: click, type into inputs, select dropd
                         return true;
                     })()
                 `
-             });
-             await humanDelay();
-             return { success: true, message: `Selected "${value}" in ${selector}` };
+          });
+          await humanDelay();
+          return { success: true, message: `Selected "${value}" in ${selector}` };
         }
 
         // 4. SCROLL
         if (action === 'scroll') {
-            const scrollScript = selector
-                ? `document.querySelector('${escJS(selector)}').scrollTo(${coordinateX}, ${coordinateY})`
-                : `window.scrollTo(${coordinateX}, ${coordinateY})`;
-            await Runtime.evaluate({ expression: scrollScript });
-            await humanDelay();
-            return { success: true, message: `Scrolled to ${coordinateX},${coordinateY}` };
+          const scrollScript = selector
+            ? `(function(){ const el = document.querySelector('${escJS(selector)}'); if(el) el.scrollTo(${coordinateX}, ${coordinateY}); else window.scrollTo(${coordinateX}, ${coordinateY}); })()`
+            : `window.scrollTo(${coordinateX}, ${coordinateY})`;
+          await Runtime.evaluate({ expression: scrollScript });
+          await humanDelay();
+          return { success: true, message: `Scrolled to ${coordinateX},${coordinateY}` };
         }
 
         // 5. WAIT
         if (action === 'wait') {
-            if (!selector) throw new Error('Selector required for wait');
-            const safeSel = escJS(selector);
-            const found = await waitFor(async () => {
-                const result = await Runtime.evaluate({
-                    expression: `document.querySelector('${safeSel}') !== null`
-                });
-                return result.result.value === true;
-            }, timeoutMs);
-            if (!found) throw new Error(`Timeout waiting for ${selector}`);
-            return { success: true, message: `Element found: ${selector}` };
+          if (!selector) throw new Error('Selector required for wait');
+          const safeSel = escJS(selector);
+          const found = await waitFor(async () => {
+            const result = await Runtime.evaluate({
+              expression: `document.querySelector('${safeSel}') !== null`
+            });
+            return result.result.value === true;
+          }, timeoutMs);
+          if (!found) throw new Error(`Timeout waiting for ${selector}`);
+          return { success: true, message: `Element found: ${selector}` };
         }
 
         throw new Error(`Unknown action: ${action}`);
@@ -166,23 +166,23 @@ description: 'Interact with page elements: click, type into inputs, select dropd
 
         const safeSel = escJS(selector);
         if (action === 'text') {
-            const result: any = await Runtime.evaluate({
-                expression: `(function() { const el = document.querySelector('${safeSel}'); return el ? el.textContent.trim() : null; })()`
-            });
-            if (result.result.value === null) throw new Error(`Element not found: ${selector}`);
-            return { success: true, text: result.result.value, selector };
+          const result: any = await Runtime.evaluate({
+            expression: `(function() { const el = document.querySelector('${safeSel}'); return el ? el.textContent.trim() : null; })()`
+          });
+          if (result.result.value === null) throw new Error(`Element not found: ${selector}`);
+          return { success: true, text: result.result.value, selector };
         }
 
         if (action === 'attribute') {
-            if (!attributeName) throw new Error('Attribute name required');
-            const safeAttr = escJS(attributeName);
-            const result: any = await Runtime.evaluate({
-                expression: `(function() { const el = document.querySelector('${safeSel}'); return el ? el.getAttribute('${safeAttr}') : {__error: 'not found'}; })()`,
-                returnByValue: true
-            });
-            const val = result.result.value;
-            if (val && val.__error) throw new Error(`Element not found: ${selector}`);
-            return { success: true, value: val, selector, attribute: attributeName };
+          if (!attributeName) throw new Error('Attribute name required');
+          const safeAttr = escJS(attributeName);
+          const result: any = await Runtime.evaluate({
+            expression: `(function() { const el = document.querySelector('${safeSel}'); if (!el) return {__notFound: true}; const v = el.getAttribute('${safeAttr}'); return v === null ? {__nullAttr: true} : v; })()`,
+            returnByValue: true
+          });
+          const val = result.result.value;
+          if (val && val.__notFound) throw new Error(`Element not found: ${selector}`);
+          return { success: true, value: val && val.__nullAttr ? null : val, selector, attribute: attributeName };
         }
 
         throw new Error(`Unknown action: ${action}`);
@@ -215,7 +215,7 @@ description: 'Interact with page elements: click, type into inputs, select dropd
           const client = await connector.getTabClient(tabId);
           const { Runtime } = client;
           await Runtime.enable();
-          
+
           const wrappedScript = `
             (function() {
               try {
@@ -227,18 +227,18 @@ description: 'Interact with page elements: click, type into inputs, select dropd
               } catch (e) { return { __error: true, message: e.message }; }
             })()
           `;
-          
+
           const result = await withTimeout(Runtime.evaluate({
             expression: wrappedScript,
             awaitPromise,
             returnByValue: true,
             userGesture: true
           }), timeoutMs, `Script execution timed out`) as any;
-          
+
           if (result.exceptionDetails) {
             return { success: false, error: result.exceptionDetails.exception?.description || 'Error' };
           }
-          
+
           let resultValue = result.result.value;
           if (resultValue && resultValue.__error) {
             return { success: false, error: resultValue.message };
@@ -246,7 +246,7 @@ description: 'Interact with page elements: click, type into inputs, select dropd
 
           // Handle potentially large output
           let truncatedInfo = {};
-          
+
           if (typeof resultValue === 'string' && resultValue.length > 50000) {
             const truncated = truncateOutput(resultValue, 50000, 'text');
             resultValue = truncated.data;
@@ -256,7 +256,7 @@ description: 'Interact with page elements: click, type into inputs, select dropd
               warning: 'Output truncated. Use get_html for large content or specific selectors.'
             };
           }
-          
+
           return {
             success: true,
             result: resultValue,

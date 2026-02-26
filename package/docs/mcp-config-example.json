@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "custom-chrome-mcp": {
+      "command": "node",
+      "args": [
+        "c:\\Users\\eddym\\Downloads\\devTools-Advance\\custom-chrome-mcp\\dist\\index.js",
+        "--port=9222"
+      ],
+      "env": {}
+    }
+  }
+}

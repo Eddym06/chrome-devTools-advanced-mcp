@@ -23,103 +23,97 @@ export function createNavigationTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Page, Network } = client;
-        
+
         await Promise.all([Page.enable(), Network.enable()]);
 
         if (action === 'navigate') {
-            if (!url) throw new Error('URL is required for "navigate" action');
-            const targetUrl = url; // TS check
-            console.error(`[Browser Action] Navigating to ${targetUrl}`);
-            
-            // Wait Logic (Duplicated for robustness)
-            let loadPromise: Promise<any>;
-            
-            if (waitUntil === 'networkidle') {
-                loadPromise = new Promise<void>((resolve, reject) => {
-                    let pendingRequests = 0;
-                    let lastRequestTime = Date.now();
-                    let checkInterval: NodeJS.Timeout;
-                    let timeoutId: NodeJS.Timeout;
-                    let hasLoaded = false;
-                    
-                    Page.loadEventFired().then(() => { hasLoaded = true; });
+          if (!url) throw new Error('URL is required for "navigate" action');
+          const targetUrl = url; // TS check
+          console.error(`[Browser Action] Navigating to ${targetUrl}`);
 
-                    const cleanup = () => {
-                        clearInterval(checkInterval);
-                        clearTimeout(timeoutId);
-                    };
+          // Wait Logic (Duplicated for robustness)
+          let loadPromise: Promise<any>;
 
-                    timeoutId = setTimeout(() => {
-                        cleanup();
-                        console.error('[Navigation] networkidle timeout, proceeding');
-                        resolve();
-                    }, timeout);
+          if (waitUntil === 'networkidle') {
+            loadPromise = new Promise<void>((resolve, reject) => {
+              let pendingRequests = 0;
+              let lastRequestTime = Date.now();
+              let checkInterval: NodeJS.Timeout;
+              let timeoutId: NodeJS.Timeout;
+              let hasLoaded = false;
 
-                    Network.requestWillBeSent(() => { pendingRequests++; lastRequestTime = Date.now(); });
-                    const onRequestDone = () => { if (pendingRequests > 0) pendingRequests--; lastRequestTime = Date.now(); };
-                    
-                    Network.loadingFinished(onRequestDone);
-                    Network.loadingFailed(onRequestDone);
+              Page.loadEventFired().then(() => { hasLoaded = true; });
 
-                    checkInterval = setInterval(() => {
-                        if (hasLoaded && pendingRequests === 0 && (Date.now() - lastRequestTime) > 500) {
-                            cleanup();
-                            resolve();
-                        }
-                    }, 100);
-                });
-            } else if (waitUntil === 'domcontentloaded') {
-                loadPromise = Page.domContentEventFired();
-            } else {
-                loadPromise = Page.loadEventFired();
-            }
+              const cleanup = () => {
+                clearInterval(checkInterval);
+                clearTimeout(timeoutId);
+              };
 
-            // Wrap Page.navigate() itself - it can hang if CDP connection is broken
-            const navResponse = await withTimeout(
-              Page.navigate({ url: targetUrl }),
-              timeout,
-              `Page.navigate command timed out for ${targetUrl}`
-            ) as { errorText?: string };
-            if (navResponse.errorText) throw new Error(`Navigation failed: ${navResponse.errorText}`);
-            
-            await withTimeout(loadPromise, timeout, `Timeout waiting for ${waitUntil} on ${targetUrl}`);
-            await humanDelay();
-            return { success: true, message: `Navigated to ${targetUrl}` };
+              timeoutId = setTimeout(() => {
+                cleanup();
+                console.error('[Navigation] networkidle timeout, proceeding');
+                resolve();
+              }, timeout);
+
+              Network.requestWillBeSent(() => { pendingRequests++; lastRequestTime = Date.now(); });
+              const onRequestDone = () => { if (pendingRequests > 0) pendingRequests--; lastRequestTime = Date.now(); };
+
+              Network.loadingFinished(onRequestDone);
+              Network.loadingFailed(onRequestDone);
+
+              checkInterval = setInterval(() => {
+                if (hasLoaded && pendingRequests === 0 && (Date.now() - lastRequestTime) > 500) {
+                  cleanup();
+                  resolve();
+                }
+              }, 100);
+            });
+          } else if (waitUntil === 'domcontentloaded') {
+            loadPromise = Page.domContentEventFired();
+          } else {
+            loadPromise = Page.loadEventFired();
+          }
+
+          const navResponse = await Page.navigate({ url: targetUrl });
+          if (navResponse.errorText) throw new Error(`Navigation failed: ${navResponse.errorText}`);
+
+          await withTimeout(loadPromise, timeout, `Timeout waiting for ${waitUntil}`);
+          await humanDelay();
+          return { success: true, message: `Navigated to ${targetUrl}` };
         }
 
         if (action === 'back') {
-            const history = await Page.getNavigationHistory();
-            if (history.currentIndex > 0) {
-                const entry = history.entries[history.currentIndex - 1];
-                await Page.navigateToHistoryEntry({ entryId: entry.id });
-                await humanDelay();
-                return { success: true, message: 'Navigated back' };
-            }
-            return { success: false, message: 'No history to go back' };
+          const history = await Page.getNavigationHistory();
+          if (history.currentIndex > 0) {
+            const entry = history.entries[history.currentIndex - 1];
+            await Page.navigateToHistoryEntry({ entryId: entry.id });
+            await humanDelay();
+            return { success: true, message: 'Navigated back' };
+          }
+          return { success: false, message: 'No history to go back' };
         }
 
         if (action === 'forward') {
-            const history = await Page.getNavigationHistory();
-            if (history.currentIndex < history.entries.length - 1) {
-                const entry = history.entries[history.currentIndex + 1];
-                await Page.navigateToHistoryEntry({ entryId: entry.id });
-                await humanDelay();
-                return { success: true, message: 'Navigated forward' };
-            }
-            return { success: false, message: 'No history to go forward' };
+          const history = await Page.getNavigationHistory();
+          if (history.currentIndex < history.entries.length - 1) {
+            const entry = history.entries[history.currentIndex + 1];
+            await Page.navigateToHistoryEntry({ entryId: entry.id });
+            await humanDelay();
+            return { success: true, message: 'Navigated forward' };
+          }
+          return { success: false, message: 'No history to go forward' };
         }
 
         if (action === 'reload') {
-            const reloadPromise = Page.loadEventFired();
-            await Page.reload({ ignoreCache: false });
-            await withTimeout(reloadPromise, timeout, 'Timeout waiting for reload to complete');
-            return { success: true, message: 'Page reloaded' };
+          await Page.reload({ ignoreCache: false });
+          await withTimeout(Page.loadEventFired(), timeout, 'Reload timed out');
+          return { success: true, message: 'Page reloaded' };
         }
 
         throw new Error(`Unknown action: ${action}`);
       }
     },
-    
+
     // Consolidated Tab Management Tool
     {
       name: 'manage_tabs',
@@ -131,35 +125,35 @@ export function createNavigationTools(connector: ChromeConnector) {
       }),
       handler: async ({ action, url, tabId }: any) => {
         await connector.verifyConnection();
-        
+
         if (action === 'list') {
-            const tabs = await connector.listTabs();
-            return { success: true, count: tabs.length, tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })) };
+          const tabs = await connector.listTabs();
+          return { success: true, count: tabs.length, tabs: tabs.map(t => ({ id: t.id, title: t.title, url: t.url })) };
         }
-        
+
         if (action === 'create') {
-            const newTab = await connector.createTab(url);
-            await humanDelay();
-            return { success: true, tab: { id: newTab.id, url: newTab.url }, message: `Created tab` };
+          const newTab = await connector.createTab(url);
+          await humanDelay();
+          return { success: true, tab: { id: newTab.id, url: newTab.url }, message: `Created tab` };
         }
-        
+
         if (action === 'close') {
-            if (!tabId) throw new Error('Tab ID required for "close"');
-            await connector.closeTab(tabId);
-            return { success: true, message: `Closed tab ${tabId}` };
+          if (!tabId) throw new Error('Tab ID required for "close"');
+          await connector.closeTab(tabId);
+          return { success: true, message: `Closed tab ${tabId}` };
         }
-        
+
         if (action === 'switch') {
-            if (!tabId) throw new Error('Tab ID required for "switch"');
-            await connector.activateTab(tabId);
-            return { success: true, message: `Switched to ${tabId}` };
+          if (!tabId) throw new Error('Tab ID required for "switch"');
+          await connector.activateTab(tabId);
+          return { success: true, message: `Switched to ${tabId}` };
         }
-        
+
         if (action === 'get_url') {
-            const client = await connector.getTabClient(tabId);
-            await client.Page.enable();
-            const { frameTree } = await client.Page.getFrameTree();
-            return { success: true, url: frameTree.frame.url, title: frameTree.frame.name || 'Untitled' };
+          const client = await connector.getTabClient(tabId);
+          await client.Page.enable();
+          const { frameTree } = await client.Page.getFrameTree();
+          return { success: true, url: frameTree.frame.url, title: frameTree.frame.name || 'Untitled' };
         }
 
         throw new Error(`Unknown action: ${action}`);
@@ -179,7 +173,7 @@ export function createNavigationTools(connector: ChromeConnector) {
         await connector.verifyConnection();
         const client = await connector.getTabClient(tabId);
         const { Page, Network, Runtime } = client;
-        
+
         await Page.enable();
         await Runtime.enable();
 
@@ -242,7 +236,7 @@ export function createNavigationTools(connector: ChromeConnector) {
             }, 100);
           });
         }
-        
+
         return {
           success: true,
           message: `Page reached state: ${state}`

@@ -53,14 +53,17 @@ const server = new Server(
 let advancedToolsEnabled = false;
 
 // Core tools (always visible)
+// Playwright launcher tools
+const playwrightTools = createPlaywrightLauncherTools(connector);
+
 const coreTools = [
   // Smart Workflows - HIGH LEVEL
   ...createSmartWorkflowTools(connector),
-  
+
   // Essential browser control
-  ...createPlaywrightLauncherTools(connector),
+  ...playwrightTools,
   ...createNavigationTools(connector),
-  
+
   // Basic interactions
   ...createInteractionTools(connector),
   ...createSessionTools(connector),
@@ -84,7 +87,7 @@ const controlTools: any[] = [
     inputSchema: z.object({}),
     handler: async (): Promise<any> => {
       advancedToolsEnabled = true;
-      
+
       // Send notification to update tool list
       try {
         await server.notification({
@@ -95,14 +98,14 @@ const controlTools: any[] = [
       } catch (e) {
         console.error('[MCP] Could not send notification:', (e as Error).message);
       }
-      
+
       return {
         success: true,
         message: 'Advanced tools unlocked',
         newToolsCount: advancedTools.length,
         categories: [
           'Network Request/Response Interception',
-          'API Mocking & WebSocket Monitoring', 
+          'API Mocking & WebSocket Monitoring',
           'HAR Recording & Replay',
           'Accessibility Tree Inspection',
           'Anti-Detection & Stealth Mode',
@@ -118,7 +121,7 @@ const controlTools: any[] = [
     inputSchema: z.object({}),
     handler: async () => {
       advancedToolsEnabled = false;
-      
+
       try {
         await server.notification({
           method: 'notifications/tools/list_changed',
@@ -127,7 +130,7 @@ const controlTools: any[] = [
       } catch (e) {
         console.error('[MCP] Could not send notification:', (e as Error).message);
       }
-      
+
       return {
         success: true,
         message: 'Advanced tools hidden',
@@ -149,53 +152,53 @@ function getActiveTools() {
 const allToolsMap = new Map([
   ...coreTools,
   ...controlTools,
-  ...advancedTools
+  ...advancedTools,
 ].map(tool => [tool.name, tool]));
 
 // Helper to convert Zod schema to JSON Schema property
 function zodTypeToJsonSchema(schema: any): any {
   if (!schema) return { type: 'string' };
-  
+
   let current = schema;
   let description = current.description;
   let defaultValue: any = undefined;
 
   // Unwrap Optional/Default/Effects wrappers and collect metadata
   while (
-    current._def.typeName === 'ZodOptional' || 
+    current._def.typeName === 'ZodOptional' ||
     current._def.typeName === 'ZodDefault' ||
     current._def.typeName === 'ZodEffects'
   ) {
     if (current.description) description = current.description;
-    
+
     if (current._def.typeName === 'ZodDefault') {
-        defaultValue = current._def.defaultValue();
+      defaultValue = current._def.defaultValue();
     }
-    
+
     if (current._def.typeName === 'ZodEffects') {
       current = current._def.schema;
     } else {
       current = current._def.innerType;
     }
   }
-  
+
   // If we still haven't found a description on the wrappers, check the inner type
   if (!description && current.description) {
     description = current.description;
   }
-  
+
   const def = current._def;
   let type = 'string'; // Default fallback
   const jsonSchema: any = {};
-  
+
   if (description) {
     jsonSchema.description = description;
   }
-  
+
   if (defaultValue !== undefined) {
-      jsonSchema.default = defaultValue;
+    jsonSchema.default = defaultValue;
   }
-  
+
   switch (def.typeName) {
     case 'ZodString':
       type = 'string';
@@ -220,7 +223,7 @@ function zodTypeToJsonSchema(schema: any): any {
       jsonSchema.enum = Object.values(def.values);
       break;
   }
-  
+
   jsonSchema.type = type;
   return jsonSchema;
 }
@@ -234,39 +237,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       const shape: any = (tool.inputSchema as any).shape;
       const properties: any = {};
       const required: string[] = [];
-      
+
       if (shape) {
         for (const key in shape) {
           const zodSchema = shape[key];
           properties[key] = zodTypeToJsonSchema(zodSchema);
-          
+
           // Check if required
           let isOptional = false;
           let current = zodSchema;
-          
+
           // Unwrap to check strict optionality
           while (
-            current._def.typeName === 'ZodOptional' || 
+            current._def.typeName === 'ZodOptional' ||
             current._def.typeName === 'ZodDefault' ||
             current._def.typeName === 'ZodEffects'
           ) {
-             if (current._def.typeName === 'ZodOptional' || current._def.typeName === 'ZodDefault') {
-               isOptional = true;
-             }
-             
-             if (current._def.typeName === 'ZodEffects') {
-               current = current._def.schema;
-             } else {
-               current = current._def.innerType;
-             }
+            if (current._def.typeName === 'ZodOptional' || current._def.typeName === 'ZodDefault') {
+              isOptional = true;
+            }
+
+            if (current._def.typeName === 'ZodEffects') {
+              current = current._def.schema;
+            } else {
+              current = current._def.innerType;
+            }
           }
-          
+
           if (!isOptional) {
             required.push(key);
           }
         }
       }
-      
+
       return {
         name: tool.name,
         description: tool.description,
@@ -283,63 +286,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // Handle tool execution
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
-  
-  console.error(`[Tool] ${name}`);
-  
+
   const tool = allToolsMap.get(name);
-  
+
   if (!tool) {
     throw new Error(`Unknown tool: ${name}`);
   }
-  
-  try {
-    // Auto-connect: ensure Chrome is available before tool execution
-    // Some tools don't need Chrome to be running
-    const noConnectionNeeded = [
-      'show_advanced_tools', 
-      'hide_advanced_tools',
-      'get_browser_status',
-      'close_browser'
-    ];
-    
-    if (!noConnectionNeeded.includes(name)) {
-      try {
-        await connector.ensureConnected();
-      } catch (e) {
-        const err = e as Error;
-        console.error('[Auto-connect] Failed:', err.message);
-        
-        // Return error to user instead of proceeding
-        return {
-          content: [
-            {
-              type: 'text',
-              text: JSON.stringify({
-                success: false,
-                error: 'Chrome connection failed',
-                details: err.message,
-                tool: name,
-                hint: 'Chrome will auto-launch on tool use. If you see this error, Chrome may have failed to launch. Try: 1) Close all Chrome windows and retry, 2) Check if port 9222 is available, 3) Use launch_edge_with_profile as alternative'
-              }, null, 2),
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
 
+  try {
     // Validate arguments with Zod
     const validatedArgs = tool.inputSchema.parse(args || {});
-    
-    // Execute tool handler with a global timeout safety net
-    const TOOL_TIMEOUT_MS = 90_000;
-    const result = await Promise.race([
-      tool.handler(validatedArgs),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${TOOL_TIMEOUT_MS / 1000}s. The browser may be unresponsive.`)), TOOL_TIMEOUT_MS)
-      )
-    ]);
-    
+
+    // Execute tool handler
+    const result = await tool.handler(validatedArgs);
+
     return {
       content: [
         {
@@ -350,7 +310,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   } catch (error) {
     const err = error as Error;
-    
+
     // Return error in a structured format
     return {
       content: [
@@ -373,14 +333,13 @@ async function main() {
   console.error('[MCP] Custom Chrome MCP Server starting...');
   console.error(`[MCP] CDP Port: ${PORT}`);
   console.error(`[MCP] ${coreTools.length + controlTools.length} core tools | ${advancedTools.length} advanced (hidden)`);
-  console.error('[MCP] Chrome will auto-launch on first tool use');
-  
+
   try {
-    
+
     // Start MCP server with stdio transport
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    
+
   } catch (error) {
     const err = error as Error;
     console.error('[MCP] Failed to start server:', err.message);

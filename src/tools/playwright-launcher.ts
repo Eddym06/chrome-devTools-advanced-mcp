@@ -6,55 +6,29 @@
 import { z } from 'zod';
 import * as path from 'path';
 import * as os from 'os';
+import * as fs from 'fs';
 import type { ChromeConnector } from '../chrome-connector.js';
-
-/**
- * Resolve Edge executable path across platforms
- */
-function getEdgePaths(): { userDataDir: string; executablePath: string } {
-  const platform = os.platform();
-  
-  if (platform === 'win32') {
-    return {
-      userDataDir: path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Edge', 'User Data'),
-      executablePath: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-    };
-  } else if (platform === 'darwin') {
-    return {
-      userDataDir: path.join(os.homedir(), 'Library', 'Application Support', 'Microsoft Edge'),
-      executablePath: '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge'
-    };
-  } else {
-    // Linux
-    return {
-      userDataDir: path.join(os.homedir(), '.config', 'microsoft-edge'),
-      executablePath: '/usr/bin/microsoft-edge'
-    };
-  }
-}
 
 export function createPlaywrightLauncherTools(connector: ChromeConnector) {
   return [
     {
-      name: 'launch_edge_with_profile',
-      description: 'Launch Microsoft Edge with your profile (cookies, extensions, sessions). Close all Edge windows first. Most features work identically to Chrome.',
+      name: 'launch_chrome_with_profile',
+      description: 'Launch Google Chrome with your real profile (cookies, extensions, sessions). IMPORTANT: Only call this tool when the user EXPLICITLY asks to open or launch Chrome. Do NOT call it automatically or proactively.',
       inputSchema: z.object({
         profileDirectory: z.string().default('Default').describe('Profile directory name: "Default", "Profile 1", etc.')
       }),
       handler: async ({ profileDirectory }: any) => {
         try {
-          const edgePaths = getEdgePaths();
-          
+          console.error(`[launch_chrome] profile: ${profileDirectory}`);
           await connector.launchWithProfile({
             headless: false,
             profileDirectory,
-            userDataDir: edgePaths.userDataDir,
-            executablePath: edgePaths.executablePath
+            force: true,   // disconnect any existing connection first
           });
-          
+
           return {
             success: true,
-            message: `Edge launched with profile: ${profileDirectory}`,
+            message: `Chrome launched with profile: ${profileDirectory}`,
             cdpPort: connector.getPort()
           };
         } catch (error) {
@@ -65,15 +39,26 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
         }
       }
     },
-    
+
     {
       name: 'close_browser',
-      description: 'Close Google Chrome and release all connections. This is the ONLY tool that can close Chrome. Use this to fully stop Chrome before relaunching with a fresh session.',
+      description: 'Close the Playwright-managed browser and release all connections. Only works for browsers launched by this MCP.',
       inputSchema: z.object({}),
       handler: async () => {
         try {
-          const result = await connector.killChrome();
-          return { success: result.killed, message: result.message };
+          if (!connector.isPlaywrightManaged()) {
+            return {
+              success: false,
+              message: 'No Playwright-managed browser to close'
+            };
+          }
+
+          await connector.disconnect();
+
+          return {
+            success: true,
+            message: 'Browser closed successfully'
+          };
         } catch (error) {
           return {
             success: false,
@@ -82,7 +67,7 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
         }
       }
     },
-    
+
     {
       name: 'get_browser_status',
       description: 'Check browser connection status, CDP port, and whether managed by Playwright or external.',
@@ -90,14 +75,14 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
       handler: async () => {
         const isConnected = connector.isConnected();
         const isPlaywright = connector.isPlaywrightManaged();
-        
+
         return {
           success: true,
           connected: isConnected,
           playwrightManaged: isPlaywright,
           port: connector.getPort(),
-          status: isConnected 
-            ? (isPlaywright ? 'Running via Playwright' : 'Connected to external Chrome') 
+          status: isConnected
+            ? (isPlaywright ? 'Running via Playwright' : 'Connected to external Chrome')
             : 'Not connected'
         };
       }

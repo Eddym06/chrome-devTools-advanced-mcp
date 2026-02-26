@@ -42,9 +42,9 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
               const headers = params.request.headers || {};
               headers[headerName] = headerValue;
 
-              const headersArray = Object.entries(headers).map(([name, value]) => ({ 
-                name, 
-                value: String(value) 
+              const headersArray = Object.entries(headers).map(([name, value]) => ({
+                name,
+                value: String(value)
               }));
 
               await Fetch.continueRequest({
@@ -58,7 +58,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
                 modified: true
               });
             } catch (error) {
-              await Fetch.continueRequest({ requestId: params.requestId }).catch(() => {});
+              await Fetch.continueRequest({ requestId: params.requestId }).catch(() => { });
             }
           });
 
@@ -140,7 +140,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
           if (action.type === 'navigate' && !action.url) {
             throw new Error('❌ action.url is required for navigate actions');
           }
-          
+
           await connector.verifyConnection();
           const client = await connector.getTabClient(tabId);
           const { Fetch, Runtime, Page, Input } = client;
@@ -203,7 +203,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
 
             } catch (error) {
               // Fallback: continue without modification
-              await Fetch.continueRequest({ requestId: params.requestId }).catch(() => {});
+              await Fetch.continueRequest({ requestId: params.requestId }).catch(() => { });
             }
           });
 
@@ -284,11 +284,11 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
           });
 
           const interceptedRequests: any[] = [];
-          
+
           // Listen for requests
           Fetch.requestPaused((params: any) => {
             interceptedRequests.push(params);
-            Fetch.continueRequest({ requestId: params.requestId }).catch(() => {});
+            Fetch.continueRequest({ requestId: params.requestId }).catch(() => { });
           });
 
           // Step 2: Perform action
@@ -300,12 +300,12 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
                 userGesture: true
               });
               break;
-            
+
             case 'navigate':
               if (!url) throw new Error('url is required for navigate action');
               await client.Page.navigate({ url });
               break;
-            
+
             case 'type':
               if (!selector || !text) throw new Error('selector and text are required for type action');
               await Runtime.evaluate({
@@ -668,35 +668,46 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
         try {
           await connector.verifyConnection();
           const client = await connector.getTabClient(tabId);
-          const { Page, Runtime, Network, Fetch } = client;
+          const { Page, Runtime, Network } = client;
 
           await Page.enable();
+          // Use Network domain (not Fetch) to avoid having to call continueResponse/continueRequest
           await Network.enable();
-          await Fetch.enable({
-            patterns: [{ urlPattern: apiPattern, requestStage: 'Response' as const }]
-          });
 
           const apiResponses: any[] = [];
+          // Store response bodies by requestId
+          const pendingResponses: Map<string, any> = new Map();
 
-          Fetch.requestPaused(async (params: any) => {
-            try {
-              const response = await Fetch.getResponseBody({ requestId: params.requestId });
-              let parsedBody;
-              try {
-                parsedBody = JSON.parse(response.body);
-              } catch {
-                parsedBody = response.body;
-              }
-              apiResponses.push({
-                url: params.request.url,
-                method: params.request.method,
-                statusCode: params.responseStatusCode,
-                body: parsedBody
+          // Build a simple glob matcher
+          const matchesPattern = (u: string) => {
+            if (apiPattern === '*') return true;
+            const regex = new RegExp('^' + apiPattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*') + '$');
+            return regex.test(u);
+          };
+
+          // Capture response metadata when it arrives
+          Network.responseReceived((params: any) => {
+            if (matchesPattern(params.response.url)) {
+              pendingResponses.set(params.requestId, {
+                url: params.response.url,
+                method: params.response.requestHeaders?.[':method'] || 'GET',
+                statusCode: params.response.status,
+                requestId: params.requestId
               });
-              await Fetch.continueRequest({ requestId: params.requestId });
-            } catch (e) {
-              await Fetch.continueRequest({ requestId: params.requestId }).catch(() => {});
             }
+          });
+
+          // After fully loaded, retrieve body
+          Network.loadingFinished(async (params: any) => {
+            const meta = pendingResponses.get(params.requestId);
+            if (!meta) return;
+            pendingResponses.delete(params.requestId);
+            try {
+              const bodyResult = await Network.getResponseBody({ requestId: params.requestId });
+              let parsedBody: any;
+              try { parsedBody = JSON.parse(bodyResult.body); } catch { parsedBody = bodyResult.body; }
+              apiResponses.push({ ...meta, body: parsedBody });
+            } catch { /* body may not be available */ }
           });
 
           // Navigate
@@ -707,14 +718,10 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
           if (waitForSelector) {
             const waitScript = `
               new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => reject('Timeout'), ${timeout});
+                const to = setTimeout(() => reject('Timeout'), ${timeout});
                 const check = () => {
-                  if (document.querySelector('${escJS(waitForSelector)}')) {
-                    clearTimeout(timeout);
-                    resolve(true);
-                  } else {
-                    setTimeout(check, 100);
-                  }
+                  if (document.querySelector('${escJS(waitForSelector)}')) { clearTimeout(to); resolve(true); }
+                  else setTimeout(check, 100);
                 };
                 check();
               })
@@ -722,11 +729,9 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
             await Runtime.evaluate({ expression: waitScript, awaitPromise: true });
           }
 
-          // Wait a bit for API calls
+          // Wait a bit for remaining async API calls
           await new Promise(resolve => setTimeout(resolve, 2000));
-
-          // Cleanup
-          await Fetch.disable();
+          await Network.disable();
 
           // Extract specific fields if requested
           let extractedData = apiResponses;
@@ -786,7 +791,7 @@ export function createSmartWorkflowTools(connector: ChromeConnector) {
             case 'export':
               // Get cookies
               const cookies = await Network.getCookies({});
-              
+
               // Get storage
               let localStorage, sessionStorage;
               if (includeLocalStorage) {

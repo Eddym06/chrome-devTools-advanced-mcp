@@ -1,10 +1,10 @@
 {
   "name": "chrome-devtools-advanced-mcp",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Cross-platform Chrome MCP with real-time request interception, response modification, network capture, HAR recording/replay, accessibility testing, anti-detection, and 91 tools. Includes smart workflows for common tasks. Works on Windows, Mac, and Linux.",
   "main": "dist/index.js",
   "bin": {
-    "chrome-devtools-advanced-mcp": "./dist/index.js"
+    "chrome-devtools-advanced-mcp": "dist/index.js"
   },
   "type": "module",
   "publishConfig": {
@@ -57,7 +57,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/Eddym06/devTools-Advance-mcp.git"
+    "url": "git+https://github.com/Eddym06/devTools-Advance-mcp.git"
   },
   "bugs": {
     "url": "https://github.com/Eddym06/devTools-Advance-mcp/issues"

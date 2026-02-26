@@ -8,120 +8,20 @@ import type { ChromeConnector } from '../chrome-connector.js';
 
 export function createAntiDetectionTools(connector: ChromeConnector) {
   return [
-    // Apply stealth mode
+    // Apply / re-apply stealth mode
     {
       name: 'enable_stealth_mode',
-      description: 'Hide automation flags (webdriver, plugins) to bypass bot detection. Call before navigating to protected sites.',
+      description: 'Re-apply stealth patches to a specific tab (webdriver flag, canvas/WebGL/audio fingerprinting, plugins). Stealth is already active automatically on launch; use this only to target a different tab or to force re-injection.',
       inputSchema: z.object({
         tabId: z.string().optional().describe('Tab ID (optional)')
       }),
       handler: async ({ tabId }: any) => {
         await connector.verifyConnection();
-        const client = await connector.getTabClient(tabId);
-        const { Runtime, Page } = client;
-        
-        await Runtime.enable();
-        await Page.enable();
-        
-        // Inject anti-detection scripts
-        const stealthScript = `
-          // Override navigator.webdriver
-          Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-          });
-          
-          // Override plugins
-          Object.defineProperty(navigator, 'plugins', {
-            get: () => [
-              {
-                0: { type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format" },
-                description: "Portable Document Format",
-                filename: "internal-pdf-viewer",
-                length: 1,
-                name: "Chrome PDF Plugin"
-              },
-              {
-                0: { type: "application/pdf", suffixes: "pdf", description: "Portable Document Format" },
-                description: "Portable Document Format",
-                filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
-                length: 1,
-                name: "Chrome PDF Viewer"
-              },
-              {
-                0: { type: "application/x-nacl", suffixes: "", description: "Native Client Executable" },
-                1: { type: "application/x-pnacl", suffixes: "", description: "Portable Native Client Executable" },
-                description: "",
-                filename: "internal-nacl-plugin",
-                length: 2,
-                name: "Native Client"
-              }
-            ]
-          });
-          
-          // Override permissions
-          const originalQuery = window.navigator.permissions.query;
-          window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-              Promise.resolve({ state: Notification.permission }) :
-              originalQuery(parameters)
-          );
-          
-          // Override chrome runtime
-          if (!window.chrome) {
-            window.chrome = {};
-          }
-          
-          if (!window.chrome.runtime) {
-            window.chrome.runtime = {};
-          }
-          
-          // Add realistic properties
-          Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en']
-          });
-          
-          Object.defineProperty(navigator, 'platform', {
-            get: () => 'Win32'
-          });
-          
-          // Override toString methods
-          const originalToString = Function.prototype.toString;
-          Function.prototype.toString = function() {
-            if (this === window.navigator.permissions.query) {
-              return 'function query() { [native code] }';
-            }
-            return originalToString.call(this);
-          };
-          
-          // Add realistic screen properties
-          Object.defineProperty(screen, 'availWidth', {
-            get: () => window.screen.width
-          });
-          
-          Object.defineProperty(screen, 'availHeight', {
-            get: () => window.screen.height - 40
-          });
-          
-          // Spoof timezone
-          Date.prototype.getTimezoneOffset = function() {
-            return 300; // EST timezone
-          };
-          
-          console.log('✅ Stealth mode enabled');
-        `;
-        
-        await Page.addScriptToEvaluateOnNewDocument({
-          source: stealthScript
-        });
-        
-        // Also apply to current page
-        await Runtime.evaluate({
-          expression: stealthScript
-        });
-        
+        // force=true so it always re-applies even if already done on this session
+        await connector.applyStealthMode(tabId, true);
         return {
           success: true,
-          message: 'Stealth mode enabled - navigator.webdriver hidden, plugins spoofed, and other anti-detection measures applied'
+          message: 'Stealth mode applied: webdriver hidden, canvas/WebGL/audio fingerprints randomised, realistic plugins/navigator set.'
         };
       }
     },
