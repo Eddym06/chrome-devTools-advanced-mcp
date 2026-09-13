@@ -14,6 +14,7 @@ import { z } from 'zod';
 import type { ChromeConnector } from '../chrome-connector.js';
 import {
   cloneChromeProfile,
+  cloneHasGoogleSession,
   getCloneRoot,
   getCloneStatus,
   isChromeRunning,
@@ -36,6 +37,106 @@ function copyWarnings(lockedFiles: string[]): string[] {
 
 export function createChromeProfileTools(connector: ChromeConnector) {
   return [
+    {
+      name: 'setup_chrome_profile',
+      description:
+        'ONE-SHOT first-time setup: makes the automated browser use the user\'s real Chrome profile. Clones the ' +
+        'profile (identity, bookmarks, history, settings, extensions — extensions only the first time), launches ' +
+        'Chrome on it, and returns the exact, plain-language steps the user must follow (usually a single sign-in ' +
+        'that then lasts forever). Call this the first time a user wants their own session, logins or extensions. ' +
+        'Safe to call again: it reports whether the setup is already done.',
+      inputSchema: z.object({
+        profile: z
+          .string()
+          .default('auto')
+          .describe('"auto" (main/logged-in profile), "Default", "Profile 1", a number, or a profile display name'),
+        includeExtensions: z.boolean().default(true).describe('Copy installed extensions (once, first setup only)'),
+        launch: z.boolean().default(true).describe('Open Chrome on the clone at the end'),
+        headless: z.boolean().default(false).describe('Launch headless (no visible window)'),
+      }),
+      handler: async ({ profile = 'auto', includeExtensions = true, launch = true, headless = false }: any) => {
+        try {
+          const profileDirectory = resolveProfileDirectory(profile);
+          const cloneName = sanitizeProfileName(profileDirectory);
+
+          // Already set up? Then do not churn files, just say so.
+          const sessionBefore = await cloneHasGoogleSession(cloneName);
+          const clone = await cloneChromeProfile({
+            profileDirectory,
+            includeExtensions,
+            resync: 'always',
+          });
+
+          let launched = false;
+          if (launch) {
+            await connector.launchWithProfile({
+              headless,
+              profileDirectory: clone.profileDirectory,
+              cloneName: clone.cloneName,
+              force: true,
+              resync: 'never',
+            });
+            launched = true;
+          }
+
+          const sessionAfter = await cloneHasGoogleSession(cloneName);
+          const signedIn = sessionAfter ?? sessionBefore ?? false;
+
+          // What the human actually has to do. On Windows (App-Bound
+          // Encryption) that is one sign-in inside the clone; on macOS/Linux
+          // the copied cookies already work and there is nothing to do.
+          const userSteps: string[] = [];
+          if (!signedIn) {
+            if (clone.appBoundEncryption) {
+              userSteps.push(
+                'Se ha abierto una ventana de Chrome con tu perfil clonado (marcadores, historial, ajustes y extensiones ya están).',
+                'Inicia sesión en Google UNA sola vez en ESA ventana (la que acaba de abrirse).',
+                'Ya está: esa sesión queda guardada en el clon y se reutiliza en cada arranque. No hace falta repetirlo.'
+              );
+            } else {
+              userSteps.push(
+                'Se ha abierto una ventana de Chrome con tu perfil clonado, incluida tu sesión copiada.',
+                'No hay nada que hacer: puedes empezar a usarla.'
+              );
+            }
+          } else {
+            userSteps.push('Todo listo: el clon ya tiene tu sesión. No hay nada que hacer.');
+          }
+          if (clone.appBoundEncryption) {
+            userSteps.push(
+              'Nota: las contraseñas guardadas y el autocompletado no se pueden copiar (Chrome las cifra con una ' +
+                'clave ligada al navegador). Si quieres, guárdalas dentro del clon una vez.'
+            );
+          }
+
+          return {
+            success: true,
+            alreadySetUp: signedIn,
+            profileDirectory: clone.profileDirectory,
+            cloneName: clone.cloneName,
+            userDataDir: clone.userDataDir,
+            launched,
+            sessionCarriedOver: clone.cookiesUsable,
+            signedInInsideClone: signedIn,
+            appBoundEncryption: clone.appBoundEncryption,
+            extensions: {
+              copiedNow: clone.extensionsCopied,
+              alreadyPresent: clone.extensionsAlreadyPresent,
+            },
+            copiedFiles: clone.copiedFiles,
+            copiedBytes: clone.copiedBytes,
+            userSteps,
+            warnings: clone.actionRequired ? [clone.actionRequired] : [],
+            nextStep: launched
+              ? 'Tell the user the steps above, then use browser_action / manage_tabs as usual.'
+              : 'Call launch_chrome_with_profile to open Chrome on this clone.',
+          };
+        } catch (error) {
+          return { success: false, error: (error as Error).message };
+        }
+      },
+    },
+
     {
       name: 'list_chrome_profiles',
       description:
@@ -98,9 +199,9 @@ export function createChromeProfileTools(connector: ChromeConnector) {
     {
       name: 'clone_chrome_profile',
       description:
-        'Clone a real Chrome profile (cookies, localStorage, logins, preferences) into a persistent managed ' +
-        'folder so the automated browser opens ALREADY LOGGED IN. Optional launch=true starts Chrome on the ' +
-        'fresh clone right away. The clone is a mirror, so it never disturbs the real Chrome.',
+        'Clone a real Chrome profile (identity, bookmarks, history, settings, localStorage) into a persistent ' +
+        'managed folder so the automated browser uses it. For a first-time user prefer setup_chrome_profile, which ' +
+        'also copies extensions and returns the sign-in instructions. Optional launch=true starts Chrome on the clone.',
       inputSchema: z.object({
         profile: z
           .string()

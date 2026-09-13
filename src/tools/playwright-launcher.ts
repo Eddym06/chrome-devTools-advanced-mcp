@@ -84,7 +84,12 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
 
     {
       name: 'launch_chrome_with_profile',
-      description: 'Launch Google Chrome on a managed clone of your real profile (cookies, sessions, logins), so it opens already signed in. IMPORTANT: Only call this tool when the user EXPLICITLY asks to open or launch Chrome. Do NOT call it automatically or proactively.',
+      description:
+        'Launch Google Chrome on a managed clone of the real profile (identity, bookmarks, history, settings, ' +
+        'extensions) or reuse an already-open debuggable browser. FIRST TIME with a new user, prefer ' +
+        'setup_chrome_profile: it does the clone, the extensions and the one-time sign-in instructions in a single ' +
+        'call. IMPORTANT: Only call this tool when the user EXPLICITLY asks to open or launch Chrome. Do NOT call ' +
+        'it automatically or proactively.',
       inputSchema: z.object({
         profileDirectory: z
           .string()

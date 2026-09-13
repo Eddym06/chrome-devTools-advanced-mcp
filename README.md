@@ -14,7 +14,7 @@ This Model Context Protocol (MCP) server enables AI assistants like Claude, Roo 
 *   **🕵️ "Human" Navigation:** Uses a persistent clone of your real Chrome profile (cookies, localStorage, logged-in accounts). If you're logged into LinkedIn, Gmail, or your corporate ERP, your AI assistant is too — and the session survives between runs.
 *   **👤 Profile Cloning:** `list_chrome_profiles` finds every profile on the machine, `clone_chrome_profile` mirrors the one you want into `~/.chrome-mcp/profiles/…`, and `sync_chrome_profile_to_real` pushes logins back into your own Chrome.
 *   **🛡️ Undetectable:** Stealth mode is applied per tab, and Chrome runs with the automation switch excluded.
-*   **🛠️ Robust Toolset:** 95+ specialized tools, plus MCP resources and prompts, optimized for data scraping, specific element extraction, and visual analysis.
+*   **🛠️ Robust Toolset:** 96+ specialized tools, plus MCP resources and prompts, optimized for data scraping, specific element extraction, and visual analysis.
 *   **⚡ Fast & Safe:** Safely executes scripts and screenshots, with intelligent output truncation to prevent crashing your AI context.
 
 ---
@@ -42,11 +42,35 @@ Restart your assistant (Ctrl+R in VS Code), and you'll have instant access.
 
 ## 💡 Simplified Usage Guide
 
-### 1. Launch the Browser
-First, ask your AI:
-> *"Launch Chrome with my default profile"*
+### 0. First time: use your real Chrome profile (one command, one sign-in)
 
-This triggers `launch_chrome_with_profile`, creating a controllable Chrome instance without closing your other windows.
+Ask your AI:
+
+> *"Set up Chrome with my profile"* → it calls **`setup_chrome_profile`**
+
+That mirrors your real profile (your profile name/avatar, bookmarks, history,
+new-tab tiles, settings and — once — your extensions) into
+`~/.chrome-mcp/profiles/<profile>` and opens Chrome on it.
+
+**What you have to do (the whole list):**
+
+| Platform | You do this | Then |
+|---|---|---|
+| **Windows** | Sign in to Google **once**, in the Chrome window that just opened | Done forever: that session lives in the clone and is reused on every launch. Chrome never needs closing, and your own browser keeps working normally |
+| **macOS / Linux** | **Close Chrome once** before the setup | Done: the cloned session works as-is, no sign-in needed |
+
+Nothing else ever: no re-login, no closing Chrome afterwards, your personal
+browser is never touched (the clone is a separate Chrome instance). Saved
+passwords and autofill cannot be copied on Windows (Chrome encrypts them with a
+key bound to the browser) — save them once inside the clone if you want them
+there.
+
+### 1. Launch the Browser
+After that, ask your AI:
+> *"Launch Chrome with my profile"*
+
+This triggers `launch_chrome_with_profile`, which **reuses the clone window**
+(or an already-debuggable Chrome) without closing your other windows.
 
 ### 2. Navigate & Analyze
 You can ask:
@@ -61,7 +85,7 @@ The AI can click, type, and fill forms intelligently, waiting for elements to lo
 
 ## 🛠️ Tool List
 
-Tools are split into two tiers so the default list stays manageable for the AI: **~38 core tools** are visible from the start; **~52 advanced tools** (Network Advanced, Anti-Detection & Privacy, Service Workers, System, Performance) stay hidden until the AI calls `show_advanced_tools` (call `hide_advanced_tools` to collapse the list again).
+Tools are split into two tiers so the default list stays manageable for the AI: **~42 core tools** are visible from the start; **~52 advanced tools** (Network Advanced, Anti-Detection & Privacy, Service Workers, System, Performance) stay hidden until the AI calls `show_advanced_tools` (call `hide_advanced_tools` to collapse the list again).
 
 <details>
 <summary><strong>👇 Click here to view all available tools</strong></summary>
@@ -159,7 +183,7 @@ exports/downloads are sandboxed to your working dir or temp folder.
 *   **[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md)** — practical workflows for
     the AI on the current (v1.5) tool vocabulary.
 *   **[docs/TOOLS.md](docs/TOOLS.md)** — complete, machine-checked reference of
-    all 95 tools.
+    all 96 tools.
 *   **[docs/INSTALL.md](docs/INSTALL.md)** — installation & configuration.
 *   **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — release notes.
 

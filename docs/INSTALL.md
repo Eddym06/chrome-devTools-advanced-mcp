@@ -86,17 +86,20 @@ real MCP protocol against it.
 
 1. Server starts → logs `[MCP] chrome-devtools-advanced-mcp vX starting...`.
 2. `get_browser_status` → not connected (expected before launch).
-3. Look at your profiles: `list_chrome_profiles` (no launch needed).
-4. User asks to open Chrome → AI calls `launch_chrome_with_profile`
-   (`profileDirectory: "auto"` = your main/logged-in profile). Chrome opens on a
-   **persistent clone** of that profile, so it is already signed in.
-5. `manage_tabs` (`action:"list"`) returns the open tabs.
-6. Call `show_advanced_tools` only when a task needs the advanced toolset.
+3. **First time with a user:** call `setup_chrome_profile` — it clones their
+   profile, copies extensions once, opens Chrome and returns the `userSteps` to
+   show them (Windows: sign in to Google once in that window; macOS/Linux: close
+   Chrome once before the call). Afterwards there is nothing to do: every launch
+   reuses the cloned window.
+4. `manage_tabs` (`action:"list"`) returns the open tabs.
+5. Call `show_advanced_tools` only when a task needs the advanced toolset.
 
-> **Chrome must be closed for the very first clone.** Chrome keeps an exclusive
-> lock on its cookie database while it runs, so the session can only be copied
-> when no Chrome window (including the background/tray process) is open. After
-> that one time the clone owns its own session and keeps it forever.
+> **Windows note (App-Bound Encryption).** Chrome 127+ encrypts cookie and
+> password values with a key bound to the browser, so a *copied* cookie DB is
+> undecryptable and Chrome deletes it. The clone therefore keeps its own session:
+> one sign-in inside it, and it lasts (the MCP never overwrites it). Cloning does
+> **not** require closing Chrome on Windows; on macOS/Linux it does, because the
+> cookie DB holds an exclusive lock while Chrome runs.
 
 ## Environment variables
 
@@ -106,8 +109,9 @@ real MCP protocol against it.
 | `CHROME_MCP_REAL_USER_DATA_DIR` | auto-detected | Real Chrome user-data dir (portable/Chromium forks) |
 | `CHROME_MCP_PROFILE_RESYNC` | `auto` | `auto` \| `always` \| `never` — how often the clone re-reads the real profile |
 | `CHROME_MCP_PROFILE_WAIT_MS` | `0` | Wait this long for a running Chrome to be closed before giving up on the cookies |
+| `CHROME_MCP_CLONE_EXTENSIONS` | on | `0` = do not copy extensions (they are copied once by default) |
+| `CHROME_MCP_CLONE_HISTORY` | on | `0` = do not mirror History/Bookmarks/Favicons/Top Sites |
 | `CHROME_MCP_NO_CLONE` | unset | `1` = launch directly on the real user-data dir (no clone; CDP usually refuses) |
-| `CHROME_MCP_CLONE_EXTENSIONS` | unset | `1` = copy extensions into the clone too |
 | `CHROME_MCP_PASSWORD_STORE` | unset | `1` = force `--use-mock-keychain --password-store=basic` (headless CI on macOS/Linux) |
 | `CHROME_MCP_ALLOW_FILE_URLS` | unset | `1` = allow `file://` navigation |
 | `CHROME_MCP_CONFIRM` | `off` | `on` = destructive tools need `_confirm:true` |

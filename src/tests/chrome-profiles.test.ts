@@ -345,6 +345,141 @@ describe('App-Bound Encryption detection', () => {
   });
 });
 
+describe('extensions are copied once', () => {
+  const extFile = () => path.join(realDir, 'Default', 'Extensions', 'abcdefghijklmnop', '1.0_0', 'manifest.json');
+
+  it('copies them on the first populate and never again', async () => {
+    write(extFile(), '{"name":"Adblock","version":"1.0"}');
+
+    const first = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    expect(first.extensionsCopied).toBe(true);
+    expect(first.extensionsAlreadyPresent).toBe(false);
+    const cloned = path.join(first.userDataDir, 'Default', 'Extensions', 'abcdefghijklmnop', '1.0_0', 'manifest.json');
+    expect(fs.readFileSync(cloned, 'utf8')).toContain('Adblock');
+
+    // The real profile's copy changes; the clone must NOT be touched again.
+    write(extFile(), '{"name":"Adblock","version":"2.0"}');
+    const second = await cloneChromeProfile({
+      profileDirectory: 'Default',
+      realUserDataDir: realDir,
+      cloneRoot,
+      resync: 'always',
+    });
+    expect(second.extensionsCopied).toBe(false);
+    expect(second.extensionsAlreadyPresent).toBe(true);
+    expect(fs.readFileSync(cloned, 'utf8')).toContain('1.0');
+
+    // …unless a refresh is requested explicitly.
+    const third = await cloneChromeProfile({
+      profileDirectory: 'Default',
+      realUserDataDir: realDir,
+      cloneRoot,
+      resync: 'always',
+      recopyExtensions: true,
+    });
+    expect(third.extensionsCopied).toBe(true);
+    expect(fs.readFileSync(cloned, 'utf8')).toContain('2.0');
+  });
+
+  it('can be disabled with includeExtensions:false', async () => {
+    write(extFile(), '{"name":"Adblock"}');
+    const clone = await cloneChromeProfile({
+      profileDirectory: 'Default',
+      realUserDataDir: realDir,
+      cloneRoot,
+      includeExtensions: false,
+    });
+    expect(clone.extensionsCopied).toBe(false);
+    expect(fs.existsSync(path.join(clone.userDataDir, 'Default', 'Extensions'))).toBe(false);
+  });
+});
+
+describe('setup_chrome_profile (one-shot onboarding)', () => {
+  const launches: any[] = [];
+  const fakeConnector = {
+    launchWithProfile: async (opts: any) => {
+      launches.push(opts);
+      return { profileDirectory: opts.profileDirectory, userDataDir: '/tmp/clone', reusedExisting: false, clone: null, processId: 1 };
+    },
+  } as any;
+
+  let previousReal: string | undefined;
+  let previousRoot: string | undefined;
+
+  beforeEach(() => {
+    previousReal = process.env.CHROME_MCP_REAL_USER_DATA_DIR;
+    previousRoot = process.env.CHROME_MCP_PROFILE_DIR;
+    process.env.CHROME_MCP_REAL_USER_DATA_DIR = realDir;
+    process.env.CHROME_MCP_PROFILE_DIR = cloneRoot;
+    launches.length = 0;
+    fs.writeFileSync(
+      path.join(realDir, 'Local State'),
+      JSON.stringify({
+        os_crypt: { encrypted_key: 'K', app_bound_encrypted_key: 'QUJDRA==' },
+        profile: { last_used: 'Default', info_cache: { Default: { name: 'Eddy', user_name: 'eddy@example.com' } } },
+      })
+    );
+  });
+
+  afterEach(() => {
+    if (previousReal === undefined) delete process.env.CHROME_MCP_REAL_USER_DATA_DIR;
+    else process.env.CHROME_MCP_REAL_USER_DATA_DIR = previousReal;
+    if (previousRoot === undefined) delete process.env.CHROME_MCP_PROFILE_DIR;
+    else process.env.CHROME_MCP_PROFILE_DIR = previousRoot;
+  });
+
+  it('does the clone, the extensions and the launch, and hands back user instructions', async () => {
+    const { createChromeProfileTools } = await import('../tools/chrome-profiles.js');
+    const tool = createChromeProfileTools(fakeConnector).find((t) => t.name === 'setup_chrome_profile');
+    expect(tool).toBeDefined();
+
+    const result = await (tool as any).handler({ profile: 'auto', includeExtensions: true, launch: true });
+
+    expect(result.success).toBe(true);
+    expect(result.profileDirectory).toBe('Default');
+    expect(result.extensions.copiedNow).toBe(true);
+    expect(result.appBoundEncryption).toBe(true);
+    expect(launches).toHaveLength(1);
+    expect(result.launched).toBe(true);
+    expect(result.userSteps.join(' ')).toMatch(/Inicia sesión en Google UNA sola vez/);
+    expect(result.userSteps.join(' ')).toMatch(/contraseñas guardadas/);
+    // Profile identity came over even on ABE platforms.
+    const cloneLocalState = JSON.parse(
+      fs.readFileSync(path.join(cloneRoot, 'Default', 'Local State'), 'utf8')
+    );
+    expect(cloneLocalState.profile.info_cache.Default.name).toBe('Eddy');
+    // A fresh clone must not inherit the real profile's App-Bound key: Chrome
+    // creates its own on first launch. (An existing clone keeps its own.)
+    expect(cloneLocalState.os_crypt?.app_bound_encrypted_key).toBeUndefined();
+  });
+
+  it('reports alreadySetUp when the clone already has a Google session', async () => {
+    let sqlite: any;
+    try {
+      sqlite = await import('node:sqlite');
+    } catch {
+      return; // node:sqlite is optional (Node 22+)
+    }
+    const { createChromeProfileTools } = await import('../tools/chrome-profiles.js');
+    const tool = createChromeProfileTools(fakeConnector).find((t) => t.name === 'setup_chrome_profile');
+
+    // First run creates the clone…
+    await (tool as any).handler({ profile: 'auto', launch: false });
+    // …then the user signs in inside it (simulated: a cookie DB with SID).
+    const dbPath = path.join(cloneRoot, 'Default', 'Default', 'Network', 'Cookies');
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    const db = new sqlite.DatabaseSync(dbPath);
+    db.exec('CREATE TABLE cookies (name TEXT)');
+    db.exec("INSERT INTO cookies (name) VALUES ('SID')");
+    db.close();
+
+    const second = await (tool as any).handler({ profile: 'auto', launch: false });
+    expect(second.alreadySetUp).toBe(true);
+    expect(second.signedInInsideClone).toBe(true);
+    expect(second.userSteps.join(' ')).toMatch(/Todo listo/);
+  });
+});
+
 describe('clone status, sync-back and removal', () => {
   it('reports status with last sync time and session state', async () => {
     const result = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });

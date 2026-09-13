@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.0] - 2026-09-13
+
+### 🚀 One-command onboarding (`setup_chrome_profile`)
+- **New `setup_chrome_profile`** does the whole first-time setup in a single call:
+  pick the profile, mirror it (identity, bookmarks, history, favicons, new-tab
+  tiles, preferences, extensions), launch Chrome on it, and return `userSteps` —
+  the exact plain-language sentences to show the human. It also reports
+  `alreadySetUp` (detected by reading the clone's own cookie DB with
+  `node:sqlite` when available) so agents can skip the ceremony afterwards.
+- **Extensions are copied ONCE** (default on, `includeExtensions`/`recopyExtensions`
+  to control, `CHROME_MCP_CLONE_EXTENSIONS=0` to skip). After the clone starts,
+  its extension state belongs to the clone; re-merging would fight it.
+- A fresh clone no longer inherits the real profile's App-Bound key — it gets its
+  own on first launch (an existing clone keeps its own, so its session survives).
+- Docs: a "what the user has to do" table per platform in README and the usage
+  guide. Short version: **Windows → sign in to Google once inside the clone;
+  macOS/Linux → close Chrome once before the setup.** Nothing else, ever.
+
+Tests: 5 new cases (extensions copied once, disabled, and the onboarding tool
+including the already-set-up path). 91 total green.
+
 ## [1.7.3] - 2026-09-13
 
 ### 🧑 Why a clone looked like a guest profile (and three fixes)

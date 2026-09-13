@@ -258,6 +258,10 @@ export interface CloneResult extends CopyStats {
   appBoundEncryption: boolean;
   /** Will the copied cookies actually log the clone in? */
   cookiesUsable: boolean;
+  /** Extensions were copied during this pass (happens once). */
+  extensionsCopied: boolean;
+  /** Extensions were already in the clone from a previous run. */
+  extensionsAlreadyPresent: boolean;
   /** Actionable instruction when the session could not be carried over. */
   actionRequired: string | null;
   durationMs: number;
@@ -274,7 +278,15 @@ export interface CloneOptions {
   cloneRoot?: string;
   /** `auto` (default) | `always` | `never`. */
   resync?: 'auto' | 'always' | 'never';
+  /**
+   * Copy installed extensions. They are copied **once** (first populate) and not
+   * again, because extension state then evolves inside the clone on its own.
+   * Default: on. `CHROME_MCP_CLONE_EXTENSIONS=0` disables, `recopyExtensions`
+   * forces a refresh.
+   */
   includeExtensions?: boolean;
+  /** Force re-copying extensions even if they were already copied once. */
+  recopyExtensions?: boolean;
   includeOptional?: boolean;
   /** Copy History/Favicons/Top Sites/Shortcuts (default true; env CHROME_MCP_CLONE_HISTORY=0). */
   includeBrowsingData?: boolean;
@@ -664,6 +676,8 @@ interface CloneMeta {
   lastSyncAt: string;
   /** When the cookie DB last came over successfully (null = never). */
   cookiesCopiedAt?: string | null;
+  /** When extensions were copied (null = never). Copied ONCE, on purpose. */
+  extensionsCopiedAt?: string | null;
   includeExtensions: boolean;
 }
 
@@ -832,7 +846,13 @@ function mergeLocalStatePortable(
     /* no readable Local State in the clone yet */
   }
 
-  const merged = { ...source, ...preserved };
+  const merged: Record<string, unknown> = { ...source, ...preserved };
+  // Never let the SOURCE's crypto keys travel: a fresh clone has none of its
+  // own yet, and writing the real profile's App-Bound key would leave the clone
+  // unable to decrypt anything it creates afterwards.
+  for (const key of LOCAL_STATE_PRIVATE_KEYS) {
+    if (!(key in preserved)) delete merged[key];
+  }
   try {
     fs.mkdirSync(path.dirname(destFile), { recursive: true });
     fs.writeFileSync(destFile, JSON.stringify(merged, null, 2));
@@ -946,7 +966,7 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
   });
   const cloneName = options.cloneName ? sanitizeProfileName(options.cloneName) : defaultCloneName(profileDirectory);
   const clonePath = getClonePath(cloneName, options.cloneRoot);
-  const includeExtensions = options.includeExtensions ?? process.env.CHROME_MCP_CLONE_EXTENSIONS === '1';
+  const includeExtensions = options.includeExtensions ?? process.env.CHROME_MCP_CLONE_EXTENSIONS !== '0';
   const includeOptional = options.includeOptional ?? true;
   const includeBrowsingData =
     options.includeBrowsingData ?? process.env.CHROME_MCP_CLONE_HISTORY !== '0';
@@ -986,6 +1006,12 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
   // "Has the clone itself touched this file since our last sync?" — used to let
   // the real profile win over files Chrome recreated empty inside the clone.
   const lastSyncMs = meta?.lastSyncAt ? Date.parse(meta.lastSyncAt) : null;
+  // Extensions are copied ONCE: after the clone starts, its extension state
+  // (updates, per-extension storage) evolves on its own and re-merging would
+  // fight it. `recopyExtensions` forces a refresh.
+  const extensionsCopiedBefore = meta?.extensionsCopiedAt != null;
+  const copyExtensionsNow =
+    options.recopyExtensions === true || (includeExtensions && !extensionsCopiedBefore);
   // No cookie DB has ever come from the real profile into this clone → the
   // cookie files must win over whatever Chrome created inside the clone.
   const forceCritical = meta?.cookiesCopiedAt == null;
@@ -1024,7 +1050,7 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
       ctx = newContext('newest', options, forceCritical, lastSyncMs);
       await mergeProfileIntoClone(sourceProfile, clonePath, profileDirectory, ctx, {
         includeOptional,
-        includeExtensions,
+        includeExtensions: copyExtensionsNow,
         includeBrowsingData,
         realUserDataDir,
         skipEncrypted: appBoundEncryption,
@@ -1062,7 +1088,10 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
         criticalLocked.length === 0 && sourceHasCookies
           ? new Date().toISOString()
           : meta?.cookiesCopiedAt ?? null,
-      includeExtensions,
+      extensionsCopiedAt: copyExtensionsNow
+        ? new Date().toISOString()
+        : meta?.extensionsCopiedAt ?? null,
+      includeExtensions: copyExtensionsNow || (meta?.includeExtensions ?? false),
     });
 
     protocolLog('debug', 'chrome-profiles', {
@@ -1161,6 +1190,8 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     cloneBrowserRunning,
     appBoundEncryption,
     cookiesUsable,
+    extensionsCopied: copyExtensionsNow,
+    extensionsAlreadyPresent: extensionsCopiedBefore && !copyExtensionsNow,
     actionRequired,    durationMs: Date.now() - startedAt,
   };
 }
@@ -1223,6 +1254,54 @@ export async function removeProfileClone(cloneName: string, cloneRoot?: string):
   }
   await fsp.rm(clonePath, { recursive: true, force: true, maxRetries: 3 });
   return clonePath;
+}
+
+/**
+ * Does the clone already hold a Google web session of its own?
+ *
+ * Used to answer "is the one-time setup already done?" without bothering the
+ * user. Reads the clone's cookie DB directly (it is only readable while the
+ * clone's browser is closed, so `null` means "cannot tell right now"). Uses
+ * node:sqlite when the runtime has it (Node 22+); returns null otherwise.
+ */
+export async function cloneHasGoogleSession(
+  cloneName: string,
+  cloneRoot?: string
+): Promise<boolean | null> {
+  try {
+    const clonePath = getClonePath(cloneName, cloneRoot);
+    const meta = readCloneMeta(clonePath);
+    const profileDirectory = meta?.profileDirectory ?? DEFAULT_PROFILE_DIRECTORY;
+    const cookieDb = ['Network/Cookies', 'Cookies']
+      .map((rel) => path.join(clonePath, profileDirectory, rel))
+      .find((file) => fs.existsSync(file));
+    if (!cookieDb) return false;
+
+    // A locked DB means the clone's browser is running: cannot read, do not guess.
+    try {
+      const fd = fs.openSync(cookieDb, 'r');
+      fs.closeSync(fd);
+    } catch {
+      return null;
+    }
+
+    const sqlite = (await import('node:sqlite')) as unknown as {
+      DatabaseSync: new (file: string, opts?: { readOnly?: boolean }) => {
+        prepare(sql: string): { get(): unknown };
+        close(): void;
+      };
+    };
+    const db = new sqlite.DatabaseSync(cookieDb, { readOnly: true });
+    const row = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM cookies WHERE name IN ('SID','__Secure-1PSID','__Secure-3PSID')"
+      )
+      .get() as { n?: number } | undefined;
+    db.close();
+    return (row?.n ?? 0) > 0;
+  } catch {
+    return null; // no node:sqlite, locked DB, unexpected schema…
+  }
 }
 
 /** Human-readable status of a clone without copying anything. */

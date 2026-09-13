@@ -43,19 +43,51 @@ current ones).
 
 ## 👤 Profile & session (start already logged in)
 
-The automated browser runs on a **persistent clone** of a real Chrome profile,
-because Chrome refuses to open its debug port on the live user-data directory.
-The clone lives in `~/.chrome-mcp/profiles/<profile>` and keeps its own session
-between MCP runs.
+### First-time setup — the whole thing in one call
+
+```
+setup_chrome_profile { "profile": "auto" }
+```
+
+That single tool: picks the user's main Chrome profile, mirrors it (profile
+identity/name/avatar, bookmarks, history, favicons, new-tab tiles, preferences
+and — **once** — installed extensions) into `~/.chrome-mcp/profiles/<profile>`,
+opens Chrome on it, and returns `userSteps`: the exact sentences to show the
+human. Safe to re-run; it reports `alreadySetUp: true` when there is nothing
+left to do.
+
+### What the user has to do (the honest, complete list)
+
+| Platform | What the user does | Why |
+|---|---|---|
+| **Windows** (Chrome 127+, App-Bound Encryption) | **Sign in to Google once, inside the Chrome window the tool opens.** Nothing else — no closing Chrome, no re-login afterwards. | Chrome encrypts cookie/password values with a key bound to the browser, so a copied cookie DB cannot be decrypted: the clone gets its own session instead. |
+| **macOS / Linux** (keychain available) | **Close Chrome once** before the first setup. Then the cloned cookies work and there is nothing to sign in. | The cookie DB is portable there, but it can only be read while Chrome is closed (it holds an exclusive lock). |
+| Both | Optional: save passwords inside the clone if the user wants them there (encrypted state never travels). | Same encryption binding. |
+
+After that first run there is **nothing to do ever again**: the clone keeps its
+own session, and every later launch reuses it (the MCP attaches to that window
+instead of launching a duplicate).
+
+**Nothing else is ever required:** no need to keep Chrome closed, no need to
+close the user's own browser (the clone is a separate browser instance), no
+repeat sign-in.
+
+### The rest of the profile tools
 
 | Task | Tool & arguments |
 |---|---|
-| See your profiles (name + Google account) | `list_chrome_profiles` (no browser needed) |
-| Clone the main profile | `clone_chrome_profile` with `{ "profile": "auto" }` |
-| Clone a specific one | `clone_chrome_profile` with `{ "profile": "Trabajo" }` or `"Profile 1"` |
-| Clone **and** open right away | `clone_chrome_profile` with `{ "launch": true }` |
-| Push logins back to your real Chrome | `sync_chrome_profile_to_real` (close Chrome first) |
+| See the machine's profiles (name + Google account) | `list_chrome_profiles` (no browser needed) |
+| Re-clone/refresh a profile | `clone_chrome_profile` with `{ "profile": "auto" }` |
+| Re-copy extensions on purpose | `clone_chrome_profile` with `{ "recopyExtensions": true }` |
+| Push logins back to the real Chrome | `sync_chrome_profile_to_real` (close Chrome first) |
 | Delete a clone | `remove_chrome_profile_clone` with `{ "cloneName": "Default" }` |
+| Wait for the user to close Chrome instead of failing | `{ "waitForChromeCloseSeconds": 60 }` |
+
+Related environment variables: `CHROME_MCP_PROFILE_DIR` (where clones live),
+`CHROME_MCP_PROFILE_RESYNC` (`auto`/`always`/`never`),
+`CHROME_MCP_PROFILE_WAIT_MS`, `CHROME_MCP_CLONE_EXTENSIONS=0` (skip extensions),
+`CHROME_MCP_CLONE_HISTORY=0` (skip history/bookmarks mirroring),
+`CHROME_MCP_NO_CLONE=1` (opt out of cloning entirely).
 
 **What actually carries over** (verified): the profile identity (name, avatar,
 account email — merged from `Local State`), localStorage, IndexedDB,

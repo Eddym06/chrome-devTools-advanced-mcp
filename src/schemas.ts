@@ -36,6 +36,19 @@ export const EXTRA_OUTPUT_SCHEMAS: Record<string, z.ZodType> = {
   get_browser_status: envelope({ connected: z.boolean().optional(), port: z.number().optional(), status: z.string().optional() }),
 
   // ── Profile cloning & session carry-over
+  setup_chrome_profile: envelope({
+    alreadySetUp: z.boolean().optional(),
+    signedInInsideClone: z.boolean().optional(),
+    profileDirectory: z.string().optional(),
+    cloneName: z.string().optional(),
+    userDataDir: z.string().optional(),
+    launched: z.boolean().optional(),
+    appBoundEncryption: z.boolean().optional(),
+    userSteps: z.array(z.string()).optional(),
+    warnings: z.array(z.string()).optional(),
+    error: z.string().optional(),
+    ...common,
+  }),
   list_chrome_profiles: envelope({
     cloneRoot: z.string().optional(),
     profileCount: z.number().optional(),
