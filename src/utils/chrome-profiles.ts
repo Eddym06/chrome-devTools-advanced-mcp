@@ -95,6 +95,34 @@ const SESSION_FILES = [
 /** Directory-shaped session state (tokens kept by web apps themselves). */
 const SESSION_DIRS = ['Local Storage', 'IndexedDB'];
 
+/**
+ * State encrypted with the profile's OS-crypt/App-Bound key. On ABE platforms
+ * (Chrome 127+ on Windows) copying these is worse than useless: Chrome cannot
+ * decrypt them in another user-data dir and discards them — and it would also
+ * overwrite the clone's OWN working state (cookies and passwords created by
+ * signing in inside the clone) with data it cannot read. So on those platforms
+ * they are skipped entirely.
+ */
+const ENCRYPTED_STATE_FILES = [
+  'Network/Cookies',
+  'Network/Cookies-journal',
+  'Network/Cookies-wal',
+  'Network/Cookies-shm',
+  'Cookies',
+  'Cookies-journal',
+  'Login Data',
+  'Login Data-journal',
+  'Login Data For Account',
+  'Login Data For Account-journal',
+  'Web Data',
+  'Web Data-journal',
+  'Account Web Data',
+  'Account Web Data-journal',
+  'Affiliation Database',
+  'Network/Device Bound Sessions',
+  'Network/Device Bound Sessions-journal',
+];
+
 /** Small, nice-to-have profile state. */
 const OPTIONAL_FILES = ['Bookmarks', 'Bookmarks.bak'];
 
@@ -728,25 +756,38 @@ async function mergeProfileIntoClone(
   clonePath: string,
   profileDirectory: string,
   ctx: CopyContext,
-  opts: { includeOptional: boolean; includeExtensions: boolean; realUserDataDir: string }
+  opts: {
+    includeOptional: boolean;
+    includeExtensions: boolean;
+    realUserDataDir: string;
+    /** Skip OS-crypt/ABE-encrypted state (cookies, passwords, Local State). */
+    skipEncrypted: boolean;
+  }
 ): Promise<void> {
   const destProfile = path.join(clonePath, profileDirectory);
 
-  // `Local State` must come first: it carries the OS-crypt key that makes the
-  // copied cookies decryptable. Its absence is the #1 cause of "the clone is
-  // logged out even though Cookies was copied".
-  const localStateSrc = path.join(opts.realUserDataDir, LOCAL_STATE_FILE);
-  const localStateDest = path.join(clonePath, LOCAL_STATE_FILE);
-  try {
-    if (fs.existsSync(localStateSrc)) {
-      await fsp.mkdir(path.dirname(localStateDest), { recursive: true });
-      await fsp.copyFile(localStateSrc, localStateDest);
+  // `Local State` holds the OS-crypt / App-Bound key. It must travel with the
+  // cookies on platforms where they are portable, and must NOT travel when they
+  // are not: replacing it would also break the clone's ability to decrypt the
+  // session the user created inside the clone.
+  if (!opts.skipEncrypted) {
+    const localStateSrc = path.join(opts.realUserDataDir, LOCAL_STATE_FILE);
+    const localStateDest = path.join(clonePath, LOCAL_STATE_FILE);
+    try {
+      if (fs.existsSync(localStateSrc)) {
+        await fsp.mkdir(path.dirname(localStateDest), { recursive: true });
+        await fsp.copyFile(localStateSrc, localStateDest);
+      }
+    } catch (err) {
+      ctx.lockedFiles.push(`${LOCAL_STATE_FILE} (${(err as NodeJS.ErrnoException).code})`);
     }
-  } catch (err) {
-    ctx.lockedFiles.push(`${LOCAL_STATE_FILE} (${(err as NodeJS.ErrnoException).code})`);
   }
 
-  for (const rel of SESSION_FILES) {
+  const sessionFiles = opts.skipEncrypted
+    ? SESSION_FILES.filter((rel) => !ENCRYPTED_STATE_FILES.includes(rel))
+    : SESSION_FILES;
+
+  for (const rel of sessionFiles) {
     await copyFile(path.join(sourceProfile, rel), path.join(destProfile, rel), rel, ctx);
   }
   for (const rel of SESSION_DIRS) {
@@ -805,6 +846,13 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
 
   await fsp.mkdir(path.join(clonePath, profileDirectory), { recursive: true });
 
+  // App-Bound Encryption (Chrome 127+ on Windows) makes OS-crypt state — cookies
+  // and saved passwords — undecryptable outside the profile that created it.
+  // Copying it would be pointless AND destructive (it would replace the session
+  // the user created inside the clone with data Chrome then discards), so the
+  // merge skips it entirely on those platforms.
+  const appBoundEncryption = hasAppBoundEncryption(realUserDataDir);
+
   const meta = readCloneMeta(clonePath);
   const recentlySynced =
     meta !== null && Date.now() - Date.parse(meta.lastSyncAt || '') < DEFAULT_AUTO_RESYNC_MS;
@@ -842,10 +890,12 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     // Chrome deliberately takes an exclusive lock on the cookie DB, so a
     // running Chrome is the one thing that blocks the session carry-over.
     // Retry the session files until the deadline instead of failing outright.
+    // (Nothing is retried on ABE platforms: encrypted state is skipped, so a
+    // running Chrome no longer blocks anything.)
     for (;;) {
       // Only pay for the stability wait when the DB was touched seconds ago
       // (i.e. Chrome is probably still shutting down); a normal launch skips it.
-      if (sourceCookieDb) {
+      if (sourceCookieDb && !appBoundEncryption) {
         const st = statOrNull(sourceCookieDb);
         if (st && Date.now() - st.mtimeMs < 5000) await waitForStableFile(sourceCookieDb);
       }
@@ -856,7 +906,10 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
         includeOptional,
         includeExtensions,
         realUserDataDir,
+        skipEncrypted: appBoundEncryption,
       });
+
+      if (appBoundEncryption) break;
 
       const lockedThisPass = ctx.lockedFiles.filter(isCriticalSessionFile);
       if (lockedThisPass.length === 0 || Date.now() >= deadline) {
@@ -873,15 +926,17 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
       await new Promise((r) => setTimeout(r, 2000));
     }
 
-    criticalLocked = ctx.lockedFiles.filter(isCriticalSessionFile);
+    criticalLocked = appBoundEncryption ? [] : ctx.lockedFiles.filter(isCriticalSessionFile);
     const sourceHasCookies =
-      fs.existsSync(path.join(sourceProfile, 'Network', 'Cookies')) || fs.existsSync(path.join(sourceProfile, 'Cookies'));
+      !appBoundEncryption &&
+      (fs.existsSync(path.join(sourceProfile, 'Network', 'Cookies')) || fs.existsSync(path.join(sourceProfile, 'Cookies')));
 
     writeCloneMeta(clonePath, {
       profileDirectory,
       sourceUserDataDir: realUserDataDir,
       lastSyncAt: new Date().toISOString(),
-      // Only claim a fresh cookie sync when the DB was actually readable.
+      // Only claim a fresh cookie sync when the DB was actually readable and
+      // portable (never on ABE platforms: there the clone keeps its own).
       cookiesCopiedAt:
         criticalLocked.length === 0 && sourceHasCookies
           ? new Date().toISOString()
@@ -918,31 +973,35 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
   const sessionState = detectSessionState(clonePath, profileDirectory);
   const hasCookieDb = sessionState.some((rel) => rel === 'Network/Cookies' || rel === 'Cookies');
   const lastCookiesSyncAt = readCloneMeta(clonePath)?.cookiesCopiedAt ?? null;
-  // "Fresh" = the cookie DB was actually readable *during this pass*. Chrome
-  // holds an exclusive lock on it while it runs, and Chrome also creates an
-  // empty cookie DB when we launch a clone that never received the real one,
-  // so mere existence (`hasCookieDb`) is not enough.
-  const cookiesMissing = !hasCookieDb;
-  const cookiesFresh = shouldMerge
-    ? criticalLocked.length === 0 && hasCookieDb
-    : hasCookieDb && lastCookiesSyncAt !== null;
-  const chromeRunning = criticalLocked.length > 0 ? true : !cookiesFresh ? await isChromeRunning() : false;
-  // A copied cookie DB is worthless on Windows/Chrome 127+: Chrome cannot
-  // decrypt it in another user-data dir and deletes it on startup.
-  const appBoundEncryption = hasAppBoundEncryption(realUserDataDir);
-  const cookiesUsable = cookiesFresh && !appBoundEncryption;
+  // On ABE platforms encrypted state is deliberately NOT copied, so the clone's
+  // cookies are its own (whatever the user signed into inside the clone).
+  const cookiesMissing = appBoundEncryption ? false : !hasCookieDb;
+  const cookiesFresh = appBoundEncryption
+    ? false
+    : shouldMerge
+      ? criticalLocked.length === 0 && hasCookieDb
+      : hasCookieDb && lastCookiesSyncAt !== null;
+  const cookiesUsable = cookiesFresh;
+  const chromeRunning = appBoundEncryption
+    ? await isChromeRunning()
+    : criticalLocked.length > 0
+      ? true
+      : !cookiesFresh
+        ? await isChromeRunning()
+        : false;
   const cloneBrowserRunning = ctx.destinationLocked.length > 0;
 
   let actionRequired: string | null = null;
-  if (appBoundEncryption && hasCookieDb) {
+  if (appBoundEncryption) {
     actionRequired =
-      'Cookies were copied, but Chrome on this machine encrypts cookie values with App-Bound Encryption, so a ' +
-      'cloned profile cannot decrypt them: Chrome will DISCARD them and open logged out of Google (and without ' +
-      'saved passwords). This cannot be worked around by copying files. Do ONE of these instead: ' +
-      '(a) log into Google once inside this clone — that session belongs to the clone and persists from then on; ' +
-      'or (b) run Chrome with its own user-data dir and a debug port and log in there once ' +
-      '(attach_to_running_chrome then reuses that browser forever). localStorage, IndexedDB, preferences and ' +
-      'bookmarks DO carry over to the clone.';
+      'Chrome on this machine encrypts cookie values (and saved passwords) with App-Bound Encryption, which is ' +
+      'bound to the browser: a cloned profile cannot decrypt them, Chrome discards them on start-up, and copying ' +
+      'them would also wipe the session you create inside the clone. So encrypted state is skipped on purpose. ' +
+      'The clone already carries localStorage, IndexedDB, preferences and bookmarks; for cookie-based logins do ' +
+      'ONE of these, once: (a) sign into Google inside this clone window — that session belongs to the clone and ' +
+      'is reused from then on; or (b) run a Chrome that is debuggable from the start ' +
+      '(--user-data-dir="%USERPROFILE%\\.chrome-mcp\\daily" --remote-debugging-port=9223) and sign in there; ' +
+      'attach_to_running_chrome then reuses that browser. No need to close Chrome for cloning on this platform.';
   } else if (cloneBrowserRunning) {
     actionRequired =
       `The clone's own browser is still running, so its profile is locked (${ctx.destinationLocked.join(', ')}). ` +
@@ -981,8 +1040,7 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     cloneBrowserRunning,
     appBoundEncryption,
     cookiesUsable,
-    actionRequired,
-    durationMs: Date.now() - startedAt,
+    actionRequired,    durationMs: Date.now() - startedAt,
   };
 }
 

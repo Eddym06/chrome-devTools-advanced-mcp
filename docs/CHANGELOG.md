@@ -18,6 +18,13 @@ property, not a bug in the copy.
   `Local State`) and reports `appBoundEncryption` + `cookiesUsable`, with an
   `actionRequired` that says what really works instead of promising a logged-in
   clone.
+- **Encrypted state is skipped, not copied-and-discarded.** Copying the real
+  cookie/password store into a clone is not only useless on ABE platforms, it is
+  destructive: it would overwrite the session the user creates *inside* the clone
+  with data Chrome then deletes. So on those platforms the merge no longer
+  touches the cookie DB, `Local State`, `Login Data`, `Web Data` or the DBSC
+  store — the clone keeps its own working session, and cloning no longer needs
+  Chrome to be closed at all.
 - `sessionCarriedOver` in the tools now means "the clone will really be logged
   in" (`cookiesUsable`), not "a cookie file was copied".
 - `attachRecipe` now leads with the honest one-time fix: drive the clone and sign

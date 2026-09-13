@@ -234,22 +234,38 @@ describe('cloneChromeProfile', () => {
 });
 
 describe('App-Bound Encryption detection', () => {
-  it('flags a profile whose Local State carries an app-bound key', () => {
+  it('skips encrypted state entirely and says what to do instead', async () => {
+    // Seed the clone with a session "created inside the clone" first.
+    const legacy = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    const cloneCookies = path.join(legacy.userDataDir, 'Default', 'Network', 'Cookies');
+    fs.writeFileSync(cloneCookies, Buffer.from('SQLite format 3\0CLONE-OWN-SESSION'));
+    const future = new Date(Date.now() + 60_000);
+    fs.utimesSync(cloneCookies, future, future);
+
+    // Now the real profile switches to App-Bound Encryption.
     fs.writeFileSync(
       path.join(realDir, 'Local State'),
       JSON.stringify({ os_crypt: { encrypted_key: 'REDACTED_TEST_KEY', app_bound_encrypted_key: 'QUJDRA==' } })
     );
-    expect(hasAppBoundEncryption(realDir)).toBe(true);
+    fs.writeFileSync(path.join(realDir, 'Default', 'Network', 'Cookies'), Buffer.from('SQLite format 3\0UNREADABLE'));
 
-    const result = cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
-    return result.then((clone) => {
-      // Cookies are copied, but they cannot be decrypted elsewhere: the tools
-      // must not promise a logged-in clone.
-      expect(clone.appBoundEncryption).toBe(true);
-      expect(clone.cookiesUsable).toBe(false);
-      expect(clone.actionRequired).toMatch(/App-Bound Encryption/);
-      expect(clone.actionRequired).toMatch(/log into Google once inside this clone/);
+    const clone = await cloneChromeProfile({
+      profileDirectory: 'Default',
+      realUserDataDir: realDir,
+      cloneRoot,
+      resync: 'always',
     });
+
+    expect(clone.appBoundEncryption).toBe(true);
+    expect(clone.cookiesUsable).toBe(false);
+    expect(clone.cookiesMissing).toBe(false);
+    expect(clone.actionRequired).toMatch(/App-Bound Encryption/);
+    expect(clone.actionRequired).toMatch(/sign into Google inside this clone/);
+    // The clone's own working session must NOT be overwritten by data Chrome
+    // would discard anyway.
+    expect(fs.readFileSync(cloneCookies, 'utf8')).toContain('CLONE-OWN-SESSION');
+    // Local State (the key material) must not be clobbered either.
+    expect(fs.readFileSync(path.join(clone.userDataDir, 'Local State'), 'utf8')).not.toContain('app_bound_encrypted_key');
   });
 
   it('does not flag a legacy (DPAPI-only) profile', () => {

@@ -60,17 +60,22 @@ between MCP runs.
 **What actually carries over** (verified): localStorage, IndexedDB, preferences,
 bookmarks, extensions (opt-in) and the list of profiles.
 
-**What does NOT carry over on Windows** — and this is not a bug in the copy:
-since Chrome 127, cookie *values* and saved passwords are encrypted with
+**What is deliberately NOT copied on Windows** — and this is not a bug in the
+copy: since Chrome 127, cookie *values* and saved passwords are encrypted with
 **App-Bound Encryption**, whose key is bound to the browser and unwrapped by the
 elevation service. A profile copied into another user-data dir cannot decrypt
 them, so Chrome **discards** them on start-up (measured: a byte-identical copy of
 a 1460-cookie database became 0 cookies, with `Failed to decrypt token …` in
-Chrome's log). Consequences:
+Chrome's log). Copying them would be worse than useless, because it would also
+overwrite the session you create *inside* the clone with data Chrome then
+deletes — so the merge skips the cookie DB, `Local State`, `Login Data`,
+`Web Data` and the DBSC store on those platforms. Consequences:
 
-- a **fresh** clone opens logged out of Google even if the cookies were copied;
+- a **fresh** clone opens logged out of Google, and saved passwords are not there;
 - `clone_chrome_profile` says so explicitly (`appBoundEncryption: true`,
   `cookiesUsable: false`, plus a `warnings` entry) instead of pretending;
+- cloning does **not** need Chrome to be closed on those platforms (nothing
+  encrypted is read), and the clone keeps its own session across launches;
 - `sync_chrome_profile_to_real` has the same limitation in reverse (on Windows).
 
 **So how do I get a logged-in browser?** Two ways that genuinely work, both
@@ -79,8 +84,8 @@ one-time:
 1. **Sign in once inside the clone.** Run
    `clone_chrome_profile { "launch": true }`, log into Google in the window that
    opens, and use that window from then on: the session belongs to the clone and
-   survives every restart. The MCP attaches to it instead of launching
-   duplicates (`attach_to_running_chrome`, attach-first launch).
+   survives every restart (the MCP never overwrites it). The MCP attaches to that
+   window instead of launching duplicates.
 2. **Run a Chrome that is debuggable from the start** and use it daily:
 
    ```
@@ -90,9 +95,9 @@ one-time:
    Sign in once there; from then on `attach_to_running_chrome` reuses *that*
    browser, with your real session, and nothing is ever copied.
 
-**Chrome must be closed for the cookie copy itself** (Chrome holds an exclusive
-lock on the cookie DB while it runs). `waitForChromeCloseSeconds` waits for the
-user instead of failing:
+**On platforms without App-Bound Encryption** (macOS/Linux with the keychain
+available) the cookie DB *is* portable: closing Chrome once lets the clone start
+logged in. `waitForChromeCloseSeconds` waits for the user instead of failing:
 
 ```json
 { "tool": "clone_chrome_profile", "args": { "profile": "auto", "waitForChromeCloseSeconds": 60 } }
