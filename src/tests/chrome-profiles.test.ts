@@ -6,6 +6,7 @@ import * as path from 'path';
 import {
   cloneChromeProfile,
   getCloneStatus,
+  hasAppBoundEncryption,
   listChromeProfiles,
   removeProfileClone,
   resolveProfileDirectory,
@@ -229,6 +230,36 @@ describe('cloneChromeProfile', () => {
     await expect(
       cloneChromeProfile({ profileDirectory: 'Profile 9', realUserDataDir: realDir, cloneRoot })
     ).rejects.toThrow(/Unknown Chrome profile/);
+  });
+});
+
+describe('App-Bound Encryption detection', () => {
+  it('flags a profile whose Local State carries an app-bound key', () => {
+    fs.writeFileSync(
+      path.join(realDir, 'Local State'),
+      JSON.stringify({ os_crypt: { encrypted_key: 'REDACTED_TEST_KEY', app_bound_encrypted_key: 'QUJDRA==' } })
+    );
+    expect(hasAppBoundEncryption(realDir)).toBe(true);
+
+    const result = cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    return result.then((clone) => {
+      // Cookies are copied, but they cannot be decrypted elsewhere: the tools
+      // must not promise a logged-in clone.
+      expect(clone.appBoundEncryption).toBe(true);
+      expect(clone.cookiesUsable).toBe(false);
+      expect(clone.actionRequired).toMatch(/App-Bound Encryption/);
+      expect(clone.actionRequired).toMatch(/log into Google once inside this clone/);
+    });
+  });
+
+  it('does not flag a legacy (DPAPI-only) profile', () => {
+    expect(hasAppBoundEncryption(realDir)).toBe(false);
+  });
+
+  it('detects an unusable session in the copy stats of a legacy profile', async () => {
+    const clone = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    expect(clone.appBoundEncryption).toBe(false);
+    expect(clone.cookiesUsable).toBe(clone.cookiesFresh);
   });
 });
 

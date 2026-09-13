@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.2] - 2026-09-13
+
+### 🔎 Why a perfect profile copy still opens logged out (App-Bound Encryption)
+Measured on a real machine: a **byte-identical** copy of a 1460-cookie profile
+became **0 cookies** the moment Chrome started on the clone, with
+`Failed to decrypt token for service AccountId-…` in Chrome's own log. Cause:
+since Chrome 127 on Windows, cookie *values* (and saved passwords) are encrypted
+with **App-Bound Encryption**, whose key is bound to the browser and unwrapped by
+the elevation service — a profile copied to another user-data dir cannot decrypt
+them, so Chrome discards the lot. It is an intentional anti-cookie-theft
+property, not a bug in the copy.
+
+- `cloneChromeProfile` now detects that (`os_crypt.app_bound_encrypted_key` in
+  `Local State`) and reports `appBoundEncryption` + `cookiesUsable`, with an
+  `actionRequired` that says what really works instead of promising a logged-in
+  clone.
+- `sessionCarriedOver` in the tools now means "the clone will really be logged
+  in" (`cookiesUsable`), not "a cookie file was copied".
+- `attachRecipe` now leads with the honest one-time fix: drive the clone and sign
+  in **once** inside it (that session belongs to the clone and persists), or run
+  a Chrome that is debuggable from the start and use it daily.
+- Also copies `Network/Device Bound Sessions`, so DBSC-bound sessions (Google's
+  `__Secure-1PSIDTS`) travel with the profile on platforms where the cookie copy
+  *is* decryptable (macOS/Linux).
+- Docs corrected: what a clone actually carries (localStorage, IndexedDB,
+  preferences, bookmarks…) and what it cannot (cookie-based logins, saved
+  passwords) on Windows.
+
 ## [1.7.0] - 2026-09-13
 
 ### 🔌 Attach to an already-open Chrome instead of launching a duplicate

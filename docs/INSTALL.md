@@ -136,6 +136,14 @@ real MCP protocol against it.
   `--remote-debugging-port=9222` for their own widgets. Start this server with a
   free port (`--port=9333`) or close that app; the server refuses to attach to a
   non-browser endpoint on purpose.
+- **The browser opens logged out even though the clone copied my cookies** → on
+  Windows, Chrome 127+ encrypts cookie values with App-Bound Encryption, which a
+  profile copied to another user-data dir cannot decrypt, so Chrome discards
+  them (the tool reports `appBoundEncryption: true`, `cookiesUsable: false`, and
+  why). Copying files cannot fix this: sign into Google **once inside the clone**
+  (that session then persists), or run a Chrome that is debuggable from the start
+  (`--user-data-dir="%USERPROFILE%\.chrome-mcp\daily" --remote-debugging-port=9223`)
+  and use it daily — `attach_to_running_chrome` reuses it.
 - **The MCP opens its own Chrome instead of using the one I have open** → a Chrome
   can only be driven through DevTools, and it only opens that endpoint when it was
   started with `--remote-debugging-port`. Chrome 136+ additionally ignores that

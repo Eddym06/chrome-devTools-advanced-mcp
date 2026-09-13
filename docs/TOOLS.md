@@ -19,13 +19,13 @@ is called (`hide_advanced_tools` collapses the list again).
 
 | Tool | Purpose |
 |---|---|
-| `launch_chrome_with_profile` | Start here — reuses an already-debuggable Chrome if there is one, otherwise launches Chrome on a persistent clone of your real profile (session/logins carried over) |
+| `launch_chrome_with_profile` | Start here — reuses an already-debuggable Chrome if there is one, otherwise launches Chrome on a persistent clone of your real profile (localStorage/preferences carry over; cookie logins need one sign-in inside the clone on Windows — see `appBoundEncryption`) |
 | `attach_to_running_chrome` | Attach to a Chrome/Edge that is **already open with a debug port** (scans ports, verifies it is a real browser, reads its process command line to see which profile it uses). If the open browser has no debug port, it explains why it cannot be attached and how to fix it |
 | `close_browser` | Close gracefully (flushes cookies/localStorage) a Chrome that THIS server launched; external browsers are only detached |
 | `get_browser_status` | Connection state, CDP port, who owns the port, Playwright-managed or external |
 | `list_chrome_profiles` | List the real Chrome profiles (display name, Google account, clone status). Needs no browser |
-| `clone_chrome_profile` | Clone a real profile into a managed folder so the browser opens already signed in (optional immediate launch) |
-| `sync_chrome_profile_to_real` | Push logins/cookies created in the clone back into your real Chrome profile |
+| `clone_chrome_profile` | Clone a real profile into a managed folder (localStorage, IndexedDB, preferences, bookmarks) and optionally launch it. Reports `cookiesUsable`/`appBoundEncryption`: on Windows a copied cookie DB is undecryptable, so sign in once inside the clone |
+| `sync_chrome_profile_to_real` | Push state created in the clone back into the real Chrome profile (session files only, never forced over locked files) |
 | `remove_chrome_profile_clone` | Delete a managed clone (frees disk, discards its session) |
 
 ## 🧭 Navigation & Tabs (core, 3)

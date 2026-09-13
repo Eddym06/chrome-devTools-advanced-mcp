@@ -78,6 +78,15 @@ const SESSION_FILES = [
   'Account Web Data',
   'Account Web Data-journal',
   'Affiliation Database',
+  // Device Bound Session Credentials state. Google (and increasingly others)
+  // binds login cookies to the device with DBSC: `__Secure-1PSIDTS` /
+  // `__Secure-1PSIDRTS` exist only when a bound session is active. Chrome
+  // VALIDATES that binding when the profile opens and silently deletes the
+  // whole bound cookie set when the store is missing — which is exactly how a
+  // flawless byte-copy of Cookies ends up as a browser that is logged out
+  // (observed: 1460 cookies in the source, 1 left after the clone started).
+  'Network/Device Bound Sessions',
+  'Network/Device Bound Sessions-journal',
   // Per-profile settings (includes the "this profile was already set up" state).
   'Preferences',
   'Secure Preferences',
@@ -194,6 +203,10 @@ export interface CloneResult extends CopyStats {
   chromeRunning: boolean;
   /** The clone's own browser is running and holds its files locked. */
   cloneBrowserRunning: boolean;
+  /** Source profile uses App-Bound Encryption → copied cookies are undecryptable. */
+  appBoundEncryption: boolean;
+  /** Will the copied cookies actually log the clone in? */
+  cookiesUsable: boolean;
   /** Actionable instruction when the session could not be carried over. */
   actionRequired: string | null;
   durationMs: number;
@@ -620,6 +633,30 @@ function resolveResync(resync: CloneOptions['resync']): 'auto' | 'always' | 'nev
   return 'auto';
 }
 
+/**
+ * Is the source profile protected by Chrome's App-Bound Encryption (ABE)?
+ *
+ * Since Chrome 127 on Windows the cookie (and password) values are encrypted
+ * with a key that is bound to the browser and unwrapped by the elevation
+ * service, so a *copied* profile cannot decrypt them: Chrome silently drops
+ * every cookie it cannot read. Measured on this machine: a byte-identical copy
+ * of a 1460-cookie database became 0 cookies the moment Chrome started on the
+ * clone, with `Failed to decrypt token …` in its own log.
+ *
+ * Detecting it lets the tools say what will really happen instead of promising
+ * a logged-in clone that cannot exist.
+ */
+export function hasAppBoundEncryption(realUserDataDir?: string): boolean {
+  try {
+    const raw = fs.readFileSync(path.join(getRealUserDataDir(realUserDataDir), LOCAL_STATE_FILE), 'utf8');
+    const parsed = JSON.parse(raw) as { os_crypt?: { app_bound_encrypted_key?: string } };
+    const key = parsed?.os_crypt?.app_bound_encrypted_key;
+    return typeof key === 'string' && key.length > 0;
+  } catch {
+    return false;
+  }
+}
+
 /** Locked entry for the cookie DB — the one thing that actually breaks a login. */
 function isCriticalSessionFile(entry: string): boolean {
   return entry.startsWith('Network/Cookies') || entry.startsWith('Cookies');
@@ -890,10 +927,23 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     ? criticalLocked.length === 0 && hasCookieDb
     : hasCookieDb && lastCookiesSyncAt !== null;
   const chromeRunning = criticalLocked.length > 0 ? true : !cookiesFresh ? await isChromeRunning() : false;
+  // A copied cookie DB is worthless on Windows/Chrome 127+: Chrome cannot
+  // decrypt it in another user-data dir and deletes it on startup.
+  const appBoundEncryption = hasAppBoundEncryption(realUserDataDir);
+  const cookiesUsable = cookiesFresh && !appBoundEncryption;
+  const cloneBrowserRunning = ctx.destinationLocked.length > 0;
 
   let actionRequired: string | null = null;
-  const cloneBrowserRunning = ctx.destinationLocked.length > 0;
-  if (cloneBrowserRunning) {
+  if (appBoundEncryption && hasCookieDb) {
+    actionRequired =
+      'Cookies were copied, but Chrome on this machine encrypts cookie values with App-Bound Encryption, so a ' +
+      'cloned profile cannot decrypt them: Chrome will DISCARD them and open logged out of Google (and without ' +
+      'saved passwords). This cannot be worked around by copying files. Do ONE of these instead: ' +
+      '(a) log into Google once inside this clone — that session belongs to the clone and persists from then on; ' +
+      'or (b) run Chrome with its own user-data dir and a debug port and log in there once ' +
+      '(attach_to_running_chrome then reuses that browser forever). localStorage, IndexedDB, preferences and ' +
+      'bookmarks DO carry over to the clone.';
+  } else if (cloneBrowserRunning) {
     actionRequired =
       `The clone's own browser is still running, so its profile is locked (${ctx.destinationLocked.join(', ')}). ` +
       'Close that window or call close_browser (it closes gracefully), then re-run this tool.';
@@ -929,6 +979,8 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     lastCookiesSyncAt,
     chromeRunning,
     cloneBrowserRunning,
+    appBoundEncryption,
+    cookiesUsable,
     actionRequired,
     durationMs: Date.now() - startedAt,
   };
@@ -1071,26 +1123,29 @@ export function attachRecipe(profileDirectory = DEFAULT_PROFILE_DIRECTORY): {
       'A running Chrome can only be driven through the DevTools protocol, and it only opens that ' +
       'endpoint when it was started with --remote-debugging-port. Chrome 136+ also ignores that switch ' +
       'when the browser uses its DEFAULT user-data directory (security fix for cookie theft), so an ' +
-      'already-open regular Chrome cannot be attached to at all.',
+      'already-open regular Chrome cannot be attached to at all. And copying a profile is not enough for ' +
+      'cookie-based logins either: Chrome on Windows (127+) encrypts cookie values with App-Bound ' +
+      'Encryption, which a cloned profile cannot decrypt, so Chrome discards them.',
     options: [
       {
         id: 'use-the-clone',
-        title: 'Drive a clone of that profile (keeps the session, nothing to close daily)',
+        title: 'Drive a clone of that profile, and log into Google once inside it',
         steps: [
-          'Close every Chrome window once (the cookie DB is locked while it runs).',
-          'clone_chrome_profile { "profile": "auto", "launch": true } — or just ask to open Chrome.',
-          `Keep using the window that opens on ${clonePath}: it is your session and the MCP attaches to it from then on.`,
+          'clone_chrome_profile { "profile": "auto", "launch": true } — a Chrome window opens on the clone.',
+          'Sign into Google in THAT window once (localStorage/preferences/bookmarks already came over).',
+          `That session belongs to the clone (${clonePath}) and is reused from then on: no copies, no closing Chrome.`,
         ],
       },
       {
         id: 'restart-with-port',
-        title: 'Restart Chrome so it exposes a debug port (then the MCP attaches to your real browser)',
+        title: 'Run a Chrome that is debuggable from the start (then the MCP attaches to your real browser)',
         steps: [
           'Close Chrome completely.',
           'Start it with a NON-default user-data dir plus the port, e.g.:',
           '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9223 ' +
             '--user-data-dir="%USERPROFILE%\\.chrome-mcp\\daily" --profile-directory=Default',
-          'Sign in once in that window; afterwards attach_to_running_chrome finds and reuses it automatically.',
+          'Sign in once in that window and use it as your everyday browser; attach_to_running_chrome finds and ' +
+            'reuses it automatically, with your real session.',
         ],
       },
     ],

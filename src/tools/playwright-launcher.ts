@@ -164,9 +164,11 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
             reusedExistingBrowser: info.reusedExisting,
             attachedPort: info.attachedPort ?? null,
             attachedKind: info.attachedKind ?? null,
-            // "Carried over" means the cookie DB was actually read this pass —
-            // an empty DB Chrome created inside the clone does not count.
-            sessionCarriedOver: info.clone ? info.clone.cookiesFresh : null,
+            // "Carried over" means the clone will really be logged in: the
+            // cookie DB was read AND the platform can decrypt it (Chrome's
+            // App-Bound Encryption makes copied cookies undecryptable).
+            sessionCarriedOver: info.clone ? info.clone.cookiesUsable : null,
+            appBoundEncryption: info.clone?.appBoundEncryption ?? null,
             liveChromeWithSameProfileNotAttachable: busy.inUse,
             howToAttach: busy.inUse ? attachRecipe(info.profileDirectory).options : null,
             clone: info.clone
