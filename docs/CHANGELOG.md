@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.3] - 2026-09-13
+
+### 🧑 Why a clone looked like a guest profile (and three fixes)
+A clone used to open with no profile name, no bookmarks and no history — as if
+it were a guest profile. Three separate causes:
+
+- **`Local State` was skipped whole** (1.7.2 skipped it to protect the clone's own
+  crypto key), and that file is also where `profile.info_cache` lives — the
+  profile names, avatars and account emails. The clone fell back to the default
+  "Your Chrome" with no identity. Now only the *portable half* is merged in
+  (`mergeLocalStatePortable`), while the clone's own `os_crypt` keys are never
+  overwritten, so profile identity comes back without breaking decryption.
+- **Bookmarks never survived**: Chrome recreates its own (empty) `Bookmarks` and
+  `History` the first time the clone starts, those files are *newer* than ours,
+  and the "newest wins" rule therefore kept the empty ones forever. Content files
+  (`Bookmarks`, `History`, `Favicons`, `Top Sites`, `Shortcuts`, `Visited Links`)
+  are now **mirrored from the real profile** — new `includeBrowsingData` (default
+  on, `CHROME_MCP_CLONE_HISTORY=0` disables) — so new-tab tiles, omnibox
+  suggestions and bookmarks look like the user's browser.
+- Session/state files (`Local Storage`, `IndexedDB`, `Preferences`, cookie DB)
+  keep the newest-wins rule, refined with "untouched since the last sync wins the
+  source", so anything the user changes **inside** the clone (logins, settings)
+  is still preserved. Content files are a mirror: editing them inside the clone
+  does not survive the next merge (documented).
+
+Cookies and saved passwords remain uncopyable on App-Bound Encryption platforms —
+that part is Chrome's design, not a copy setting (see 1.7.2).
+Tests: 4 new cases (87 total green).
+
 ## [1.7.2] - 2026-09-13
 
 ### 🔎 Why a perfect profile copy still opens logged out (App-Bound Encryption)

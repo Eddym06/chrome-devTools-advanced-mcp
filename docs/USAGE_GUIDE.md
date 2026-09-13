@@ -57,8 +57,23 @@ between MCP runs.
 | Push logins back to your real Chrome | `sync_chrome_profile_to_real` (close Chrome first) |
 | Delete a clone | `remove_chrome_profile_clone` with `{ "cloneName": "Default" }` |
 
-**What actually carries over** (verified): localStorage, IndexedDB, preferences,
-bookmarks, extensions (opt-in) and the list of profiles.
+**What actually carries over** (verified): the profile identity (name, avatar,
+account email — merged from `Local State`), localStorage, IndexedDB,
+preferences/theme (including the new-tab wallpaper setting), bookmarks, history,
+favicons, new-tab tiles, keyboard shortcuts and the list of profiles.
+
+Two rules worth knowing:
+
+- **Content files are a mirror of your real profile** (`Bookmarks`, `History`,
+  `Favicons`, `Top Sites`, `Shortcuts`): they are refreshed from the real profile
+  on every merge, because Chrome recreates its own empty versions inside a new
+  clone. Editing bookmarks *inside the clone* therefore does not survive the next
+  merge. `CHROME_MCP_CLONE_HISTORY=0` disables copying them.
+- **Session/state files are the clone's own** (`Local Storage`, `IndexedDB`,
+  `Preferences`, cookie DB): newest wins, and a file the clone has not touched
+  since the last sync is refreshed from the real profile. Logins and settings you
+  create inside the clone are preserved — including the clone's own encryption
+  keys, which are never overwritten.
 
 **What is deliberately NOT copied on Windows** — and this is not a bug in the
 copy: since Chrome 127, cookie *values* and saved passwords are encrypted with

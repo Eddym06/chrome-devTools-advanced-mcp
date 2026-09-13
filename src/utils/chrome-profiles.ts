@@ -126,6 +126,29 @@ const ENCRYPTED_STATE_FILES = [
 /** Small, nice-to-have profile state. */
 const OPTIONAL_FILES = ['Bookmarks', 'Bookmarks.bak'];
 
+/**
+ * Browsing data that is NOT encrypted, so it travels to a clone perfectly:
+ * it is what makes the clone feel like "your" browser (new-tab tiles, omnibox
+ * suggestions, favicons) instead of a fresh/guest profile.
+ */
+const BROWSING_DATA_FILES = [
+  'History',
+  'History-journal',
+  'Favicons',
+  'Favicons-journal',
+  'Top Sites',
+  'Top Sites-journal',
+  'Visited Links',
+  'Shortcuts',
+];
+
+/**
+ * Local State keys that belong to the profile that owns them and must NEVER be
+ * taken from the source profile: they hold the OS-crypt / App-Bound key that
+ * decrypts this profile's cookies and passwords.
+ */
+const LOCAL_STATE_PRIVATE_KEYS = ['os_crypt'];
+
 /** Only copied when `includeExtensions` is requested (can be heavy). */
 const EXTENSION_ENTRIES = [
   'Extensions',
@@ -253,6 +276,8 @@ export interface CloneOptions {
   resync?: 'auto' | 'always' | 'never';
   includeExtensions?: boolean;
   includeOptional?: boolean;
+  /** Copy History/Favicons/Top Sites/Shortcuts (default true; env CHROME_MCP_CLONE_HISTORY=0). */
+  includeBrowsingData?: boolean;
   maxFileBytes?: number;
   maxFiles?: number;
   /**
@@ -458,6 +483,13 @@ interface CopyContext extends CopyStats {
   maxFiles: number;
   seenFiles: number;
   /**
+   * When the clone's copy of a file has NOT been touched since our last sync,
+   * the source wins even if the clone's copy looks "newer": Chrome creates its
+   * own empty Bookmarks/History the first time a clone starts, and mtime alone
+   * would then keep the empty file forever.
+   */
+  lastSyncMs: number | null;
+  /**
    * Ignore the "clone copy is newer" rule for the cookie DB. Needed the first
    * time a clone is populated: launching Chrome on an empty clone makes Chrome
    * create its own (newer, empty) cookie DB, which would otherwise win over
@@ -469,11 +501,13 @@ interface CopyContext extends CopyStats {
 function newContext(
   strategy: CopyContext['strategy'],
   options: CloneOptions,
-  forceCritical = false
+  forceCritical = false,
+  lastSyncMs: number | null = null
 ): CopyContext {
   return {
     strategy,
     forceCritical,
+    lastSyncMs,
     copiedFiles: 0,
     copiedBytes: 0,
     skippedUnchanged: 0,
@@ -523,7 +557,15 @@ async function copyFile(
     return;
   }
   const overrideNewer = ctx.forceCritical && isCriticalSessionFile(rel);
-  if (destStat && ctx.strategy === 'newest' && !overrideNewer && destStat.mtimeMs > stat.mtimeMs) {
+  const cloneUntouched =
+    destStat !== null && ctx.lastSyncMs !== null && destStat.mtimeMs <= ctx.lastSyncMs;
+  if (
+    destStat &&
+    ctx.strategy === 'newest' &&
+    !overrideNewer &&
+    !cloneUntouched &&
+    destStat.mtimeMs > stat.mtimeMs
+  ) {
     ctx.keptNewerInClone.push(rel);
     return;
   }
@@ -750,6 +792,56 @@ export async function isChromeRunning(): Promise<boolean> {
   }
 }
 
+/**
+ * Merge the *portable* half of `Local State` into the clone, keeping the
+ * clone's own crypto keys.
+ *
+ * `Local State` is a mixed bag: it holds the OS-crypt / App-Bound key (which
+ * MUST stay the clone's own, or the clone can no longer decrypt its own
+ * cookies) and it also holds `profile.info_cache` — the profile names, avatars
+ * and account emails. Copying it whole would break the clone's decryption;
+ * not copying it at all is why a clone looks like an unnamed "Your Chrome"
+ * (guest-looking) profile. So: take everything except the private keys.
+ */
+function mergeLocalStatePortable(
+  sourceFile: string,
+  destFile: string,
+  ctx: CopyContext
+): void {
+  if (!fs.existsSync(sourceFile)) return;
+  let source: Record<string, unknown>;
+  try {
+    source = JSON.parse(fs.readFileSync(sourceFile, 'utf8')) as Record<string, unknown>;
+  } catch {
+    return;
+  }
+
+  const preserved: Record<string, unknown> = {};
+  try {
+    const dest = JSON.parse(fs.readFileSync(destFile, 'utf8')) as Record<string, unknown>;
+    for (const key of LOCAL_STATE_PRIVATE_KEYS) {
+      if (dest[key] !== undefined) preserved[key] = dest[key];
+    }
+    // `profile.info_cache` describes the *source* machine's profiles and carries
+    // the names/avatars/emails; the source must win there, while any other
+    // profile keys the clone already owns are kept.
+    if (dest.profile && typeof dest.profile === 'object') {
+      source = { ...source, profile: { ...(dest.profile as object), ...(source.profile as object) } };
+    }
+  } catch {
+    /* no readable Local State in the clone yet */
+  }
+
+  const merged = { ...source, ...preserved };
+  try {
+    fs.mkdirSync(path.dirname(destFile), { recursive: true });
+    fs.writeFileSync(destFile, JSON.stringify(merged, null, 2));
+    ctx.copiedFiles++;
+  } catch (err) {
+    ctx.lockedFiles.push(`${LOCAL_STATE_FILE} (${(err as NodeJS.ErrnoException).code})`);
+  }
+}
+
 /** Copies `Local State` (key material) + the session entries into the clone. */
 async function mergeProfileIntoClone(
   sourceProfile: string,
@@ -759,6 +851,8 @@ async function mergeProfileIntoClone(
   opts: {
     includeOptional: boolean;
     includeExtensions: boolean;
+    /** Copy History/Favicons/Top Sites/Shortcuts (unencrypted, portable). */
+    includeBrowsingData: boolean;
     realUserDataDir: string;
     /** Skip OS-crypt/ABE-encrypted state (cookies, passwords, Local State). */
     skipEncrypted: boolean;
@@ -769,10 +863,13 @@ async function mergeProfileIntoClone(
   // `Local State` holds the OS-crypt / App-Bound key. It must travel with the
   // cookies on platforms where they are portable, and must NOT travel when they
   // are not: replacing it would also break the clone's ability to decrypt the
-  // session the user created inside the clone.
-  if (!opts.skipEncrypted) {
-    const localStateSrc = path.join(opts.realUserDataDir, LOCAL_STATE_FILE);
-    const localStateDest = path.join(clonePath, LOCAL_STATE_FILE);
+  // session the user created inside the clone. On those platforms only the
+  // portable half (profile names, avatars, account emails…) is merged in.
+  const localStateSrc = path.join(opts.realUserDataDir, LOCAL_STATE_FILE);
+  const localStateDest = path.join(clonePath, LOCAL_STATE_FILE);
+  if (opts.skipEncrypted) {
+    mergeLocalStatePortable(localStateSrc, localStateDest, ctx);
+  } else {
     try {
       if (fs.existsSync(localStateSrc)) {
         await fsp.mkdir(path.dirname(localStateDest), { recursive: true });
@@ -796,11 +893,29 @@ async function mergeProfileIntoClone(
       await copyTree(src, path.join(destProfile, rel), ctx, rel);
     }
   }
+  // Content files are MIRRORED from the real profile: Chrome recreates its own
+  // (empty) Bookmarks/History inside the clone on first start, and those files
+  // are newer than ours, so a "newest wins" rule would keep an empty profile
+  // forever — exactly why a clone felt like a guest profile. Session/state files
+  // keep the newest-wins rule above so logins made inside the clone survive.
+  const previousStrategy = ctx.strategy;
+  ctx.strategy = 'overwrite';
+
   if (opts.includeOptional) {
     for (const rel of OPTIONAL_FILES) {
       await copyFile(path.join(sourceProfile, rel), path.join(destProfile, rel), rel, ctx);
     }
   }
+  if (opts.includeBrowsingData) {
+    // Plain (unencrypted) SQLite stores: history, favicons, new-tab tiles and
+    // omnibox shortcuts. This is what makes the clone feel like the user's own
+    // browser instead of a freshly-created profile.
+    for (const rel of BROWSING_DATA_FILES) {
+      await copyFile(path.join(sourceProfile, rel), path.join(destProfile, rel), rel, ctx);
+    }
+  }
+
+  ctx.strategy = previousStrategy;
   if (opts.includeExtensions) {
     for (const rel of EXTENSION_ENTRIES) {
       const src = path.join(sourceProfile, rel);
@@ -833,6 +948,8 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
   const clonePath = getClonePath(cloneName, options.cloneRoot);
   const includeExtensions = options.includeExtensions ?? process.env.CHROME_MCP_CLONE_EXTENSIONS === '1';
   const includeOptional = options.includeOptional ?? true;
+  const includeBrowsingData =
+    options.includeBrowsingData ?? process.env.CHROME_MCP_CLONE_HISTORY !== '0';
   const resync = resolveResync(options.resync);
 
   const sourceProfile = path.join(realUserDataDir, profileDirectory);
@@ -866,6 +983,9 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
 
   let ctx = newContext('newest', options);
   let criticalLocked: string[] = [];
+  // "Has the clone itself touched this file since our last sync?" — used to let
+  // the real profile win over files Chrome recreated empty inside the clone.
+  const lastSyncMs = meta?.lastSyncAt ? Date.parse(meta.lastSyncAt) : null;
   // No cookie DB has ever come from the real profile into this clone → the
   // cookie files must win over whatever Chrome created inside the clone.
   const forceCritical = meta?.cookiesCopiedAt == null;
@@ -901,10 +1021,11 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
       }
       const before = statSignature(sourceCookieDb);
 
-      ctx = newContext('newest', options, forceCritical);
+      ctx = newContext('newest', options, forceCritical, lastSyncMs);
       await mergeProfileIntoClone(sourceProfile, clonePath, profileDirectory, ctx, {
         includeOptional,
         includeExtensions,
+        includeBrowsingData,
         realUserDataDir,
         skipEncrypted: appBoundEncryption,
       });

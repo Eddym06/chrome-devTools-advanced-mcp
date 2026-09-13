@@ -272,6 +272,72 @@ describe('App-Bound Encryption detection', () => {
     expect(hasAppBoundEncryption(realDir)).toBe(false);
   });
 
+  it('merges the portable half of Local State (profile names) while keeping the clone key', async () => {
+    const first = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    const cloneLocalState = path.join(first.userDataDir, 'Local State');
+
+    // The clone ends up with its OWN crypto key (as Chrome writes it).
+    fs.writeFileSync(
+      cloneLocalState,
+      JSON.stringify({ os_crypt: { encrypted_key: 'CLONE-OWN-KEY' }, profile: { info_cache: { Default: { name: 'Your Chrome' } } } })
+    );
+
+    // Real profile now uses ABE and has the user's profile names.
+    fs.writeFileSync(
+      path.join(realDir, 'Local State'),
+      JSON.stringify({
+        os_crypt: { encrypted_key: 'REAL-KEY', app_bound_encrypted_key: 'QUJDRA==' },
+        profile: { info_cache: { Default: { name: 'Eddy', user_name: 'eddym062806@gmail.com' } }, last_used: 'Default' },
+        browser: { some_setting: true },
+      })
+    );
+
+    await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot, resync: 'always' });
+
+    const merged = JSON.parse(fs.readFileSync(cloneLocalState, 'utf8'));
+    expect(merged.os_crypt.encrypted_key).toBe('CLONE-OWN-KEY'); // never clobbered
+    expect(merged.os_crypt.app_bound_encrypted_key).toBeUndefined();
+    expect(merged.profile.info_cache.Default.name).toBe('Eddy'); // no more "Your Chrome"
+    expect(merged.browser.some_setting).toBe(true); // other portable keys came over
+  });
+
+  it('copies browsing data (history, top sites) so the clone does not look guest-fresh', async () => {
+    fs.writeFileSync(path.join(realDir, 'Default', 'History'), 'fake-history-db');
+    fs.writeFileSync(path.join(realDir, 'Default', 'Top Sites'), 'fake-top-sites');
+    const clone = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    expect(fs.readFileSync(path.join(clone.userDataDir, 'Default', 'History'), 'utf8')).toBe('fake-history-db');
+    expect(fs.readFileSync(path.join(clone.userDataDir, 'Default', 'Top Sites'), 'utf8')).toBe('fake-top-sites');
+  });
+
+  it('lets the real profile win over files Chrome recreated empty inside the clone', async () => {
+    const first = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    // Chrome creates an empty Bookmarks the first time the clone starts…
+    fs.writeFileSync(path.join(first.userDataDir, 'Default', 'Bookmarks'), '{"roots":{}}');
+    // …and it is newer than the src one, which is why mtime alone kept the empty file.
+    const future = new Date(Date.now() + 120_000);
+    fs.utimesSync(path.join(first.userDataDir, 'Default', 'Bookmarks'), future, future);
+    fs.writeFileSync(path.join(realDir, 'Default', 'Bookmarks'), '{"roots":{"bar":[1,2,3]}}');
+
+    const second = await cloneChromeProfile({
+      profileDirectory: 'Default',
+      realUserDataDir: realDir,
+      cloneRoot,
+      resync: 'always',
+    });
+    expect(fs.readFileSync(path.join(second.userDataDir, 'Default', 'Bookmarks'), 'utf8')).toContain('bar');
+  });
+
+  it('still keeps what the user changed inside the clone after the last sync', async () => {
+    const first = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot, resync: 'always' });
+    const clonePrefs = path.join(first.userDataDir, 'Default', 'Preferences');
+    fs.writeFileSync(clonePrefs, JSON.stringify({ profile: { name: 'Cambiado en el clon' } }));
+    const future = new Date(Date.now() + 180_000);
+    fs.utimesSync(clonePrefs, future, future); // touched after the last sync
+
+    const second = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot, resync: 'always' });
+    expect(fs.readFileSync(path.join(second.userDataDir, 'Default', 'Preferences'), 'utf8')).toContain('Cambiado en el clon');
+  });
+
   it('detects an unusable session in the copy stats of a legacy profile', async () => {
     const clone = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
     expect(clone.appBoundEncryption).toBe(false);
