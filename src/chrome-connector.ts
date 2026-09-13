@@ -14,7 +14,13 @@ import { promisify } from 'util';
 
 import { withTimeout } from './utils/helpers.js';
 import { reportProgress } from './utils/log.js';
-import { cloneChromeProfile, getRealUserDataDir, type CloneResult } from './utils/chrome-profiles.js';
+import {
+  cloneChromeProfile,
+  getRealUserDataDir,
+  resolveProfileDirectory,
+  type CloneResult,
+} from './utils/chrome-profiles.js';
+import { classifyCdpEndpoint } from './utils/cdp-endpoint.js';
 
 const execAsync = promisify(exec);
 
@@ -192,8 +198,8 @@ export class ChromeConnector {
 
     try {
       // Check if a real browser is already running on the port and connect to it.
-      const isReal = await this.isRealBrowserOnPort();
-      if (isReal) {
+      const probe = await this.probeCdpPort();
+      if (probe.ok) {
         await this.connect();
         console.error(`✅ Detected and connected to existing browser on port ${this.port}`);
 
@@ -213,7 +219,24 @@ export class ChromeConnector {
           processId: this.chromeProcess?.pid ?? null,
         };
       }
+
+      // The port is taken by something that is NOT a drivable browser (an
+      // embedded Chromium widget, a leftover service…). Spawning Chrome on that
+      // port cannot work (the debug port would never bind) and silently driving
+      // the other process is worse, so fail fast with an actionable message.
+      if (probe.occupied) {
+        throw new Error(
+          `CDP port ${this.port} is already in use by ${
+            probe.processName ? `"${probe.processName}"` : 'another process'
+          }${
+            probe.browser ? ` (Browser: ${probe.browser}, UA: ${probe.userAgent})` : ''
+          } — ${probe.reason ?? 'it is not a controllable browser'}. ` +
+            `Start this server on a free port (--port=<other>) instead.`
+        );
+      }
     } catch (e) {
+      // Re-throw our own actionable error; swallow "port free" failures.
+      if (e instanceof Error && e.message.startsWith('CDP port')) throw e;
       // Port free or not a real browser – proceed to launch.
     }
 
@@ -224,6 +247,14 @@ export class ChromeConnector {
       profileDirectory = 'Default',
       executablePath = platformPaths.executable
     } = options;
+
+    // Resolve "auto" / display names / profile numbers to the REAL directory
+    // name. Passing the raw value through would make Chrome look for (and
+    // cheerfully create) a brand-new empty profile called "auto".
+    if (!userDataDir) {
+      profileDirectory = resolveProfileDirectory(profileDirectory);
+      console.error(`👤 Using Chrome profile: ${profileDirectory}`);
+    }
 
     const originalUserDataDir = userDataDir || platformPaths.userDataDir;
     let finalUserDataDir = originalUserDataDir;
@@ -816,48 +847,100 @@ export class ChromeConnector {
   }
 
   /**
-   * Verify that the process on the CDP port is actually a controllable
-   * Chrome/Edge browser, NOT a background process like msedgewebview2.exe
-   * that may also listen on 9222 but is NOT scriptable via CDP.
-   * We do this by fetching /json/version and checking the "Browser" field.
+   * Ask the endpoint on the CDP port who it is, and whether it is a
+   * user-visible browser we may drive. Embedded Chromium (WebView2 widgets,
+   * Electron apps) also answers `/json/version`, so the payload alone is not
+   * enough — we also look up which process owns the port.
    */
-  private async isRealBrowserOnPort(): Promise<boolean> {
+  async probeCdpPort(): Promise<{
+    occupied: boolean;
+    ok: boolean;
+    browser?: string;
+    userAgent?: string;
+    processName?: string;
+    reason?: string;
+  }> {
+    const version = await new Promise<Record<string, any> | null>((resolve) => {
+      void import('http').then((http) => {
+        const req = http.default.get(`http://localhost:${this.port}/json/version`, { timeout: 2000 }, (res) => {
+          let data = '';
+          res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
+          res.on('end', () => {
+            try {
+              resolve(JSON.parse(data));
+            } catch {
+              resolve(null);
+            }
+          });
+        });
+        req.on('error', () => resolve(null));
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+      }).catch(() => resolve(null));
+    });
+
+    if (!version) {
+      // Nothing answers on /json/version: either the port is free or it is held
+      // by an unrelated service (both mean "we cannot attach").
+      return { occupied: await this.isPortOccupied(), ok: false };
+    }
+
+    const processName = await this.processNameOnPort();
+    const verdict = classifyCdpEndpoint(version, processName);
+    console.error(
+      `[Port-check] ${this.port}: Browser="${verdict.browser}" UA="${verdict.userAgent}" proc="${processName ?? '?'}" → ${
+        verdict.ok ? 'REAL browser' : `NOT a browser (${verdict.reason})`
+      }`
+    );
+    return {
+      occupied: true,
+      ok: verdict.ok,
+      browser: verdict.browser,
+      userAgent: verdict.userAgent,
+      processName: processName ?? undefined,
+      reason: verdict.reason,
+    };
+  }
+
+  /** Image name of the process listening on the CDP port (best effort). */
+  private async processNameOnPort(): Promise<string | null> {
+    if (os.platform() !== 'win32') return null;
     try {
-      const http = await import('http');
-      return await new Promise<boolean>((resolve) => {
-        const req = http.default.get(
-          `http://localhost:${this.port}/json/version`,
-          { timeout: 2000 },
-          (res) => {
-            let data = '';
-            res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
-            res.on('end', () => {
-              try {
-                const json = JSON.parse(data);
-                // A real Chrome/Edge exposes a "Browser" field like
-                // "Chrome/145.0..." or "Edg/...".
-                // EdgeWebView2 either returns nothing useful or its
-                // Browser field contains "HeadlessChrome" without a
-                // real window – we block WebView2 by checking the
-                // User-Agent / webSocketDebuggerUrl quirks.
-                const browser: string = json.Browser || '';
-                const isWebView = (json['User-Agent'] || '').includes('WebView') ||
-                  browser.toLowerCase().includes('webview');
-                const hasValidBrowser = browser.length > 0 && !isWebView;
-                console.error(`[Port-check] /json/version Browser: "${browser}" → ${hasValidBrowser ? 'REAL' : 'NOT real (WebView2 or empty)'}`);
-                resolve(hasValidBrowser);
-              } catch {
-                resolve(false);
-              }
-            });
-          }
-        );
-        req.on('error', () => resolve(false));
-        req.on('timeout', () => { req.destroy(); resolve(false); });
-      });
+      const { stdout } = await execAsync(
+        `powershell -NoProfile -Command "$p = (Get-NetTCPConnection -LocalPort ${this.port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess; if ($p) { (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName }"`
+      );
+      const name = stdout.trim();
+      return name ? `${name}.exe` : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Is anything listening on the CDP port? */
+  private async isPortOccupied(): Promise<boolean> {
+    const platform = os.platform();
+    try {
+      const cmd =
+        platform === 'win32'
+          ? `powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort ${this.port} -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count"`
+          : platform === 'darwin'
+            ? `lsof -nP -iTCP:${this.port} -sTCP:LISTEN`
+            : `lsof -nP -iTCP:${this.port} -sTCP:LISTEN || ss -ltn`;
+      const { stdout } = await execAsync(cmd);
+      if (platform === 'win32') return Number(stdout.trim()) > 0;
+      return stdout.trim().length > 0;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Verify that the process on the CDP port is actually a controllable
+   * user-visible Chrome/Edge browser — not a background/embedded Chromium
+   * (msedgewebview2, Electron…) that also answers `/json/version` but is not
+   * something the user can see or that we should be driving.
+   */
+  private async isRealBrowserOnPort(): Promise<boolean> {
+    return (await this.probeCdpPort()).ok;
   }
 
   /**

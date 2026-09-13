@@ -37,6 +37,25 @@ All notable changes to this project will be documented in this file.
 - `launch_chrome_with_profile` now honours `headless`, defaults to `"auto"` profile selection, and
   returns the clone statistics (files copied, session items, warnings).
 
+### 🐛 Fixes found by driving the real browser
+- **`"auto"` no longer reaches Chrome as a profile name.** `launch_chrome_with_profile` passed the raw
+  string through, so Chrome happily created an empty profile called `auto` (`--profile-directory=auto`)
+  instead of using the real one. The profile is now resolved to its real directory name before launch
+  (`src/chrome-connector.ts`).
+- **A CDP port owned by an embedded Chromium is rejected instead of hijacked.** Port 9222 on Windows is
+  routinely held by WebView2-based apps (Lenovo Vantage's battery widget:
+  `Browser: Edg/152…`, `User-Agent: LenovoVantage/3.0.0.197`). The old check only rejected payloads
+  containing "webview", so the server "connected" to a hidden widget and every tool drove the wrong
+  browser. Endpoints are now classified by browser token, real-browser user agent and the process that
+  owns the port (`src/utils/cdp-endpoint.ts`), and the launch fails fast with an actionable message
+  instead of spawning Chrome onto a busy port. `get_browser_status` reports the port owner.
+- **"Session carried over" is no longer reported when it was not.** The launch result used "does a
+  cookie file exist", which is true for the empty cookie DB Chrome creates inside a fresh clone. It now
+  reports cookie *freshness*, and a clone whose cookies never came over retries the copy on every launch
+  (the "synced recently" shortcut no longer hides it) and says so in `warnings`.
+- **`CHROME_MCP_REAL_USER_DATA_DIR` is honoured on launch** (the connector used to overwrite it with the
+  platform default, so the override had no effect).
+
 ### 🧪 Tests & docs
 - 12 new unit tests (`src/tests/chrome-profiles.test.ts`) covering discovery, resolution, cloning,
   incremental merge, cookie freshness, sync-back and removal.

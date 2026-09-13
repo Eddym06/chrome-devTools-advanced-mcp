@@ -51,12 +51,18 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
 
           return {
             success: true,
-            message: `Chrome launched with profile: ${info.profileDirectory}${info.clone ? ' (managed clone, session carried over)' : ''}`,
+            message: info.clone
+              ? info.clone.cookiesFresh
+                ? `Chrome launched with profile: ${info.profileDirectory} (managed clone, session carried over)`
+                : `Chrome launched with profile: ${info.profileDirectory} (managed clone — the session was NOT carried over; see warnings)`
+              : `Chrome launched with profile: ${info.profileDirectory}`,
             cdpPort: connector.getPort(),
             profileDirectory: info.profileDirectory,
             userDataDir: info.userDataDir,
             reusedExistingBrowser: info.reusedExisting,
-            sessionCarriedOver: info.clone ? !info.clone.cookiesMissing : null,
+            // "Carried over" means the cookie DB was actually read this pass —
+            // an empty DB Chrome created inside the clone does not count.
+            sessionCarriedOver: info.clone ? info.clone.cookiesFresh : null,
             clone: info.clone
               ? {
                   name: info.clone.cloneName,
@@ -123,6 +129,11 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
         const isConnected = connector.isConnected();
         const isPlaywright = connector.isPlaywrightManaged();
 
+        // When we are not connected, say *why* the CDP port is unusable: a
+        // hidden Chromium widget (WebView2/Electron) on the same port is the
+        // most common cause and it used to look like "the browser is broken".
+        const portProbe = isConnected ? null : await connector.probeCdpPort();
+
         return {
           success: true,
           connected: isConnected,
@@ -130,7 +141,20 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
           port: connector.getPort(),
           status: isConnected
             ? (isPlaywright ? 'Running via Playwright' : 'Connected to external Chrome')
-            : 'Not connected'
+            : 'Not connected',
+          cdpPort: portProbe
+            ? {
+                occupied: portProbe.occupied,
+                drivableBrowser: portProbe.ok,
+                processName: portProbe.processName ?? null,
+                browser: portProbe.browser ?? null,
+                warning: portProbe.occupied && !portProbe.ok
+                  ? `Port ${connector.getPort()} is held by ${portProbe.processName ?? 'another process'}: ${
+                      portProbe.reason ?? 'not a drivable browser'
+                    }. Restart this server with --port=<free port>.`
+                  : null,
+              }
+            : null,
         };
       }
     }

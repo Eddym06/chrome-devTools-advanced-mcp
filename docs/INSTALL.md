@@ -131,6 +131,11 @@ real MCP protocol against it.
   **Always Allow** when the tool is invoked again.
 - **Connection refused** → check the port is free and matches the `--port`
   argument; run `get_browser_status` to confirm the state.
+- **"CDP port 9222 is already in use by …"** → another Chromium-based app owns that
+  port. On Windows, Lenovo Vantage, some OEM tools and Electron apps open
+  `--remote-debugging-port=9222` for their own widgets. Start this server with a
+  free port (`--port=9333`) or close that app; the server refuses to attach to a
+  non-browser endpoint on purpose.
 - **Cookie values look redacted** → by design: pass `includeValues:true` to
   `get_cookies` / `export_session` / `manage_browser_session` when you truly
   need them.

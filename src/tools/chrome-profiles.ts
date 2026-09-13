@@ -171,6 +171,7 @@ export function createChromeProfileTools(connector: ChromeConnector) {
             cookiesFresh: result.cookiesFresh,
             lastCookiesSyncAt: result.lastCookiesSyncAt,
             chromeRunning: result.chromeRunning,
+            cloneBrowserRunning: result.cloneBrowserRunning,
             reusedExistingClone: result.reused,
             copiedFiles: result.copiedFiles,
             copiedBytes: result.copiedBytes,

@@ -163,6 +163,11 @@ export interface CopyStats {
   skippedUnchanged: number;
   /** Files the OS refused to read/write (almost always: Chrome has them open). */
   lockedFiles: string[];
+  /**
+   * Subset of `lockedFiles` where the SOURCE was readable but the destination
+   * refused the write — i.e. the clone's own browser is still running.
+   */
+  destinationLocked: string[];
   /** Present in the clone, newer than the source — kept as-is. */
   keptNewerInClone: string[];
   truncated: boolean;
@@ -187,6 +192,8 @@ export interface CloneResult extends CopyStats {
   lastCookiesSyncAt: string | null;
   /** A `chrome` process appears to be running right now. */
   chromeRunning: boolean;
+  /** The clone's own browser is running and holds its files locked. */
+  cloneBrowserRunning: boolean;
   /** Actionable instruction when the session could not be carried over. */
   actionRequired: string | null;
   durationMs: number;
@@ -430,6 +437,7 @@ function newContext(
     copiedBytes: 0,
     skippedUnchanged: 0,
     lockedFiles: [],
+    destinationLocked: [],
     keptNewerInClone: [],
     truncated: false,
     maxFileBytes: options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES,
@@ -493,6 +501,16 @@ async function copyFile(
       }
       if (isLockError(err)) {
         ctx.lockedFiles.push(`${rel} (${(err as NodeJS.ErrnoException).code})`);
+        // Was the source readable? Then the lock is on the clone's side, which
+        // means the automated browser is still running — a very different fix
+        // for the user than "close your own Chrome".
+        try {
+          const fd = fs.openSync(src, 'r');
+          fs.closeSync(fd);
+          ctx.destinationLocked.push(rel);
+        } catch {
+          /* source is locked too: the real Chrome is the one holding it */
+        }
       } else if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
         ctx.lockedFiles.push(`${rel} (${(err as NodeJS.ErrnoException).code})`);
       }
@@ -709,8 +727,13 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
   const meta = readCloneMeta(clonePath);
   const recentlySynced =
     meta !== null && Date.now() - Date.parse(meta.lastSyncAt || '') < DEFAULT_AUTO_RESYNC_MS;
+  // The "synced recently" shortcut must NOT apply while the cookie DB has never
+  // made it over (a running Chrome prevents it): otherwise a launch would keep
+  // reporting a carried-over session that does not exist.
   const shouldMerge =
-    resync === 'always' || (resync === 'auto' && !recentlySynced) || !fs.existsSync(path.join(clonePath, LOCAL_STATE_FILE));
+    resync === 'always' ||
+    (resync === 'auto' && (!recentlySynced || meta?.cookiesCopiedAt == null)) ||
+    !fs.existsSync(path.join(clonePath, LOCAL_STATE_FILE));
 
   let ctx = newContext('newest', options);
   let criticalLocked: string[] = [];
@@ -797,7 +820,12 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
   const chromeRunning = criticalLocked.length > 0 ? true : !cookiesFresh ? await isChromeRunning() : false;
 
   let actionRequired: string | null = null;
-  if (criticalLocked.length > 0) {
+  const cloneBrowserRunning = ctx.destinationLocked.length > 0;
+  if (cloneBrowserRunning) {
+    actionRequired =
+      `The clone's own browser is still running, so its profile is locked (${ctx.destinationLocked.join(', ')}). ` +
+      'Close that window or call close_browser (it closes gracefully), then re-run this tool.';
+  } else if (criticalLocked.length > 0) {
     actionRequired = lastCookiesSyncAt
       ? `Chrome is running, so the cookie database could not be refreshed (locked: ${criticalLocked.join(', ')}). ` +
         `The clone still has the cookies from the last successful sync (${lastCookiesSyncAt}). Close Chrome and ` +
@@ -810,6 +838,10 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     actionRequired =
       'No cookie database was found for this profile. If your session lives in another Chrome profile, call ' +
       'list_chrome_profiles and clone that one instead.';
+  } else if (!shouldMerge && lastCookiesSyncAt === null) {
+    actionRequired =
+      'This clone has never captured your real cookies (Chrome was running when it was created), so it will open ' +
+      'logged out. Close Chrome and run clone_chrome_profile again, or launch with resync:"always".';
   }
 
   return {
@@ -824,6 +856,7 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     cookiesFresh,
     lastCookiesSyncAt,
     chromeRunning,
+    cloneBrowserRunning,
     actionRequired,
     durationMs: Date.now() - startedAt,
   };

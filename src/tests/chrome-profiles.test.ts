@@ -175,6 +175,44 @@ describe('cloneChromeProfile', () => {
     expect(second.copiedFiles).toBe(0);
   });
 
+  it('never takes the "synced recently" shortcut while the cookies have not come over', async () => {
+    const first = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    const metaPath = path.join(first.userDataDir, '.chrome-mcp-clone.json');
+
+    // Simulate the state a locked cookie DB leaves behind: a fresh sync where
+    // the cookies never made it (Chrome was running).
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    meta.cookiesCopiedAt = null;
+    meta.lastSyncAt = new Date().toISOString();
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+
+    const second = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot, resync: 'auto' });
+    expect(second.reused).toBe(false); // merge attempted again, not skipped
+    expect(second.lastCookiesSyncAt).not.toBeNull();
+
+    const third = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot, resync: 'auto' });
+    expect(third.reused).toBe(true); // now the shortcut is legitimate
+  });
+
+  it('flags a clone that never captured the session when the merge is skipped', async () => {
+    const first = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
+    const metaPath = path.join(first.userDataDir, '.chrome-mcp-clone.json');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+    meta.cookiesCopiedAt = null;
+    meta.lastSyncAt = new Date().toISOString();
+    fs.writeFileSync(metaPath, JSON.stringify(meta));
+
+    const result = await cloneChromeProfile({
+      profileDirectory: 'Default',
+      realUserDataDir: realDir,
+      cloneRoot,
+      resync: 'never',
+    });
+    expect(result.reused).toBe(true);
+    expect(result.cookiesFresh).toBe(false);
+    expect(result.actionRequired).toMatch(/never captured your real cookies/);
+  });
+
   it('removes stale Chrome lock files from the clone (otherwise Chrome exits immediately)', async () => {
     const result = await cloneChromeProfile({ profileDirectory: 'Default', realUserDataDir: realDir, cloneRoot });
     fs.writeFileSync(path.join(result.userDataDir, 'SingletonLock'), '');
