@@ -87,6 +87,9 @@ async function killTree(proc: ChildProcess | null): Promise<void> {
 
 const run = e2eEnabled && !!chromePath;
 
+// 30s per test: this suite boots a real Chrome and drives the real MCP server
+// over stdio, so the default 5s is too tight when the rest of the suite runs in
+// parallel (the same tests take <1s when run alone).
 describe.skipIf(!run)('real-Chrome E2E smoke', () => {
   let chrome: ChildProcess | null = null;
   let profileDir: string | null = null;
@@ -253,4 +256,4 @@ describe.skipIf(!run)('real-Chrome E2E smoke', () => {
     expect(fs.existsSync(exportPayload.filepath)).toBe(true);
     fs.rmSync(exportPayload.filepath, { force: true });
   }, 30_000);
-});
+}, 30_000);
