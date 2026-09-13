@@ -1,10 +1,10 @@
-# Tool Reference (all 90 tools)
+# Tool Reference (all 94 tools)
 
 Complete, machine-checked list of the tools exposed by this server
 (`npm run docs:check` verifies this document never references a tool that
 does not exist).
 
-**Tiers:** 36 core tools are visible immediately + 2 control tools;
+**Tiers:** 40 core tools are visible immediately + 2 control tools;
 **52 advanced tools** are registered but hidden until `show_advanced_tools`
 is called (`hide_advanced_tools` collapses the list again).
 
@@ -15,13 +15,17 @@ is called (`hide_advanced_tools` collapses the list again).
 | `show_advanced_tools` | Unlock the hidden advanced toolset |
 | `hide_advanced_tools` | Hide the advanced toolset again |
 
-## 🎭 Browser & Session (core, 3)
+## 🎭 Browser & Profile (core, 7)
 
 | Tool | Purpose |
 |---|---|
-| `launch_chrome_with_profile` | Start here — launches Chrome with your real profile (cookies/extensions), without closing other windows |
-| `close_browser` | Close a Chrome that THIS server launched (external browsers are only detached) |
+| `launch_chrome_with_profile` | Start here — launches Chrome on a persistent clone of your real profile (session/logins carried over), without closing other windows |
+| `close_browser` | Close gracefully (flushes cookies/localStorage) a Chrome that THIS server launched; external browsers are only detached |
 | `get_browser_status` | Connection state, CDP port, Playwright-managed or external |
+| `list_chrome_profiles` | List the real Chrome profiles (display name, Google account, clone status). Needs no browser |
+| `clone_chrome_profile` | Clone a real profile into a managed folder so the browser opens already signed in (optional immediate launch) |
+| `sync_chrome_profile_to_real` | Push logins/cookies created in the clone back into your real Chrome profile |
+| `remove_chrome_profile_clone` | Delete a managed clone (frees disk, discards its session) |
 
 ## 🧭 Navigation & Tabs (core, 3)
 

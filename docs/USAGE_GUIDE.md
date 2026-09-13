@@ -1,7 +1,7 @@
 # Chrome Devtools Advanced MCP — Usage Guide
 
 A practical guide for the AI (and its human) on how to drive Chrome through
-this MCP server. Tool names below are the **current (v1.4) consolidated
+this MCP server. Tool names below are the **current (v1.5) consolidated
 names** — early guides used a different vocabulary where navigation, clicks
 and tab listing were separate plain-named tools; those tools no longer exist
 (the table in [Common Mistakes](#-common-mistakes) maps the old names to the
@@ -28,12 +28,56 @@ current ones).
 1. User asks to open the browser → call:
 
    ```json
-   { "tool": "launch_chrome_with_profile", "args": { "profileDirectory": "Default" } }
+   { "tool": "launch_chrome_with_profile", "args": { "profileDirectory": "auto" } }
    ```
+
+   `"auto"` = the profile Chrome used last that actually has a session (your
+   main, logged-in profile). Chrome opens on a **clone** of it, so the browser
+   starts already signed in and keeps its own session between runs.
 
 2. Check state with `get_browser_status` (`browser_action`/`manage_tabs` are
    the daily drivers; the **~52 advanced tools** are hidden until you call
    `show_advanced_tools` — do that when a task needs them).
+
+---
+
+## 👤 Profile & session (start already logged in)
+
+The automated browser runs on a **persistent clone** of a real Chrome profile,
+because Chrome refuses to open its debug port on the live user-data directory.
+The clone lives in `~/.chrome-mcp/profiles/<profile>` and carries cookies,
+localStorage, saved passwords and preferences, so logins survive between MCP
+runs.
+
+| Task | Tool & arguments |
+|---|---|
+| See your profiles (name + Google account) | `list_chrome_profiles` (no browser needed) |
+| Clone the main profile | `clone_chrome_profile` with `{ "profile": "auto" }` |
+| Clone a specific one | `clone_chrome_profile` with `{ "profile": "Trabajo" }` or `"Profile 1"` |
+| Clone **and** open right away | `clone_chrome_profile` with `{ "launch": true }` |
+| Push logins back to your real Chrome | `sync_chrome_profile_to_real` (close Chrome first) |
+| Delete a clone | `remove_chrome_profile_clone` with `{ "cloneName": "Default" }` |
+
+**The one rule that matters:** Chrome keeps an *exclusive lock* on its cookie
+database while it runs, so the first clone needs Chrome closed. If it wasn't,
+the tool says so plainly and reports `cookiesFresh:false` — the clone opens
+logged out. Ask the user to close Chrome and retry:
+
+```json
+{ "tool": "clone_chrome_profile", "args": { "profile": "auto", "waitForChromeCloseSeconds": 60 } }
+```
+
+`waitForChromeCloseSeconds` waits for the user instead of failing, so the
+agent can say "close Chrome now" and everything continues by itself. After
+that first successful clone the session belongs to the clone: signing into a
+site inside the automated browser persists to the next launch, and
+`sync_chrome_profile_to_real` copies it into the real Chrome profile (again,
+with Chrome closed).
+
+Related environment variables: `CHROME_MCP_PROFILE_DIR` (where clones live),
+`CHROME_MCP_PROFILE_RESYNC` (`auto`/`always`/`never`),
+`CHROME_MCP_PROFILE_WAIT_MS`, `CHROME_MCP_CLONE_EXTENSIONS=1`,
+`CHROME_MCP_NO_CLONE=1` (opt out of cloning entirely).
 
 ---
 

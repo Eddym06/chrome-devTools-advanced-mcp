@@ -14,6 +14,7 @@ import { promisify } from 'util';
 
 import { withTimeout } from './utils/helpers.js';
 import { reportProgress } from './utils/log.js';
+import { cloneChromeProfile, type CloneResult } from './utils/chrome-profiles.js';
 
 const execAsync = promisify(exec);
 
@@ -51,6 +52,30 @@ export interface LaunchOptions {
   executablePath?: string;
   /** If true, disconnect any existing connection and re-launch. */
   force?: boolean;
+  /**
+   * Clone the real profile into the managed clone root before launching
+   * (default true). Chrome cannot expose CDP on the live user-data dir, and a
+   * clone is what makes the session survive between MCP runs.
+   */
+  cloneProfile?: boolean;
+  /** Folder name of the managed clone (default: the profile directory name). */
+  cloneName?: string;
+  /** How aggressively to refresh the clone from the real profile. */
+  resync?: 'auto' | 'always' | 'never';
+  /** Also copy installed extensions into the clone. */
+  includeExtensions?: boolean;
+}
+
+/** What actually happened during a launch (clone included) — reported to tools. */
+export interface LaunchInfo {
+  profileDirectory: string;
+  /** `--user-data-dir` that was used (the clone, when cloning is enabled). */
+  userDataDir: string | null;
+  /** True when an already-running browser on the CDP port was reused. */
+  reusedExisting: boolean;
+  /** Clone statistics, when a clone was created or refreshed. */
+  clone: CloneResult | null;
+  processId: number | null;
 }
 
 export class ChromeConnector {
@@ -126,106 +151,19 @@ export class ChromeConnector {
     }
   }
 
-  /**
-   * createShadowProfile: Clones essential parts of the profile to a temp dir
-   * to bypass Chrome's restriction on debugging the Default profile.
-   * Cross-platform: uses robocopy on Windows, rsync on Unix systems.
-   */
-  private async createShadowProfile(sourceUserData: string, profileName: string): Promise<string> {
-    const tempDir = path.join(os.tmpdir(), 'chrome-mcp-shadow');
-    const platform = os.platform();
-    const profileDest = path.join(tempDir, profileName);
+  private lastLaunchInfo: LaunchInfo | null = null;
 
-    // Ensure parent dir exists
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir, { recursive: true });
-    }
-
-    console.error(`👥 Creating/Updating Shadow Profile at: ${tempDir}`);
-    console.error(`   Platform: ${platform}`);
-    console.error(`   Source: ${sourceUserData}`);
-
-    // 1. Copy Local State (critical for encryption keys + profiles list)
-    const localStateSrc = path.join(sourceUserData, 'Local State');
-    const localStateDest = path.join(tempDir, 'Local State');
-    try {
-      if (fs.existsSync(localStateSrc)) {
-        fs.copyFileSync(localStateSrc, localStateDest);
-      }
-    } catch (e) { console.error('Warning: could not copy Local State', e); }
-
-    // 2. Copy the profile folder (platform-specific)
-    const profileSrc = path.join(sourceUserData, profileName);
-
-    // Exclude heavy cache folders to make launch fast and avoid locked files
-    const excludeDirs = [
-      "Cache",
-      "Code Cache",
-      "GPUCache",
-      "DawnCache",
-      "ShaderCache",
-      "Safe Browsing",
-      "File System",
-      "Service Worker\\CacheStorage",
-      "Service Worker\\ScriptCache",
-      "VideoDecodeStats",
-      "History Provider Cache",
-      "optimization_guide_hint_cache_store",
-      "AutofillStrikeDatabase"
-    ];
-
-    if (platform === 'win32') {
-      // Windows: use robocopy
-      const xdParams = excludeDirs.map(d => `"${d}"`).join(' ');
-      // /MIR = Mirror, /XD = Exclude Dirs, /R:0 /W:0 = No retries, /XJ = No junctions, /MT = Multi-thread
-      const cmd = `robocopy "${profileSrc}" "${profileDest}" /MIR /XD ${xdParams} /R:0 /W:0 /XJ /MT:16`;
-
-      try {
-        await execAsync(cmd);
-      } catch (e: any) {
-        // Robocopy exit codes: 0-7 are success/partial, 8+ is failure
-        if (e.code > 7) {
-          console.error('⚠️ Shadow Profile copy had errors (Chrome may be running):', e.stderr?.slice(0, 200));
-        }
-      }
-    } else {
-      // Unix (Mac/Linux): use rsync
-      const excludeParams = excludeDirs.map(d => `--exclude="${d}"`).join(' ');
-      const cmd = `rsync -av --delete ${excludeParams} "${profileSrc}/" "${profileDest}/"`;
-
-      try {
-        await execAsync(cmd);
-        console.error('✅ Profile copied via rsync');
-      } catch (e: any) {
-        console.error('⚠️ Shadow Profile copy had errors:', e.message);
-      }
-    }
-
-    // ─── CRITICAL FIX ────────────────────────────────────────────────────────
-    // Chrome writes SingletonLock / SingletonSocket / SingletonCookie when it
-    // starts.  If a previous session was killed (not cleanly closed) these
-    // files remain.  A new Chrome instance sees them, thinks another Chrome is
-    // already running in this profile, and exits immediately with code 0.
-    // Delete them before every launch so Chrome always starts fresh.
-    const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
-    for (const lf of lockFiles) {
-      // Delete from root of user-data dir AND from inside the profile subdir
-      for (const dir of [tempDir, profileDest]) {
-        const p = path.join(dir, lf);
-        try { if (fs.existsSync(p)) { fs.unlinkSync(p); console.error(`🔓 Removed stale lock: ${p}`); } }
-        catch { /* non-fatal */ }
-      }
-    }
-    // ─────────────────────────────────────────────────────────────────────────
-
-    return tempDir;
+  /** Details of the most recent launch (clone stats, user-data dir, PID). */
+  getLastLaunchInfo(): LaunchInfo | null {
+    return this.lastLaunchInfo;
   }
+
 
   /**
    * Launch Chrome manually using child_process to avoid blocking and argument issues
    * This is more robust for persistent profiles than Playwright's launcher
    */
-  async launchWithProfile(options: LaunchOptions = {}): Promise<void> {
+  async launchWithProfile(options: LaunchOptions = {}): Promise<LaunchInfo> {
     // Fresh launch attempt — allow a previous process-death cleanup to run again.
     this.cleaningUp = false;
 
@@ -235,7 +173,15 @@ export class ChromeConnector {
         // Not a forced re-launch: just ensure the window is visible and return.
         console.error('✅ Already connected to a Chrome instance. Bringing window to foreground...');
         await this.bringWindowToForeground();
-        return;
+        return (
+          this.lastLaunchInfo ?? {
+            profileDirectory: options.profileDirectory ?? 'Default',
+            userDataDir: null,
+            reusedExisting: true,
+            clone: null,
+            processId: this.chromeProcess?.pid ?? null,
+          }
+        );
       }
       // Forced re-launch (e.g. user explicitly called launch_edge or launch_chrome):
       // disconnect from the current browser before spawning a new one.
@@ -258,7 +204,13 @@ export class ChromeConnector {
           try { await this.connection?.client.Target.createTarget({ url: 'chrome://newtab/' }); } catch { }
         }
         await this.bringWindowToForeground();
-        return;
+        return {
+          profileDirectory: options.profileDirectory ?? 'Default',
+          userDataDir: null,
+          reusedExisting: true,
+          clone: null,
+          processId: this.chromeProcess?.pid ?? null,
+        };
       }
     } catch (e) {
       // Port free or not a real browser – proceed to launch.
@@ -274,16 +226,37 @@ export class ChromeConnector {
 
     const originalUserDataDir = userDataDir || platformPaths.userDataDir;
     let finalUserDataDir = originalUserDataDir;
+    let cloneResult: CloneResult | null = null;
 
-    // 2. Handle Shadow Profile Logic
-    // If identifying as Default profile, we MUST clone it to avoid debug lock
-    // ONLY IF we are not already pointing to a custom dir (userDataDir was null/undefined originally)
-    if (profileDirectory === 'Default' && !userDataDir) {
+    // 2. Profile handling.
+    // Chrome will not expose the CDP port on the *live* user-data dir, and it
+    // cannot even start against it while the user's own Chrome is running. So
+    // by default we launch on a persistent managed clone of the real profile,
+    // which (a) is debuggable, and (b) carries the user's cookies/localStorage
+    // over, so the browser starts already logged in. Set
+    // CHROME_MCP_NO_CLONE=1 or pass cloneProfile:false to opt out.
+    const cloneEnabled = options.cloneProfile ?? process.env.CHROME_MCP_NO_CLONE !== '1';
+    if (!userDataDir && cloneEnabled) {
       try {
-        console.error("🔒 Default profile requested. Creating/Updating Shadow Copy to enable debugging...");
-        finalUserDataDir = await this.createShadowProfile(originalUserDataDir, profileDirectory);
+        console.error('👥 Preparing managed clone of the real Chrome profile...');
+        cloneResult = await cloneChromeProfile({
+          profileDirectory,
+          cloneName: options.cloneName,
+          realUserDataDir: originalUserDataDir,
+          resync: options.resync,
+          includeExtensions: options.includeExtensions,
+        });
+        finalUserDataDir = cloneResult.userDataDir;
+        console.error(
+          `✅ Clone ready (${cloneResult.copiedFiles} file(s) copied, ${cloneResult.sessionState.length} session item(s)): ${finalUserDataDir}`
+        );
+        if (cloneResult.lockedFiles.length > 0) {
+          console.error(
+            `⚠️ ${cloneResult.lockedFiles.length} profile file(s) were locked by a running Chrome (close Chrome for a fresher session).`
+          );
+        }
       } catch (err) {
-        console.error("❌ Failed to create shadow profile, attempting raw launch (may fail):", err);
+        console.error('❌ Failed to prepare the profile clone, falling back to the raw user-data dir:', err);
         finalUserDataDir = originalUserDataDir;
       }
     }
@@ -291,7 +264,7 @@ export class ChromeConnector {
     console.error(`🚀 Launching Chrome Native...`);
     console.error(`   User Data: ${finalUserDataDir}`);
     console.error(`   Profile: ${profileDirectory}`);
-    await reportProgress(15, 100, 'Shadow profile ready — launching Chrome');
+    await reportProgress(15, 100, cloneResult ? 'Profile clone ready — launching Chrome' : 'Launching Chrome');
 
     const args = [
       `--remote-debugging-port=${this.port}`,
@@ -302,11 +275,21 @@ export class ChromeConnector {
       '--no-default-browser-check',
       '--disable-infobars',
       '--exclude-switches=enable-automation',
-      '--use-mock-keychain',
-      '--password-store=basic',
       '--new-window',         // ← always open a visible window
       '--start-maximized',    // ← open maximized so it's easy to see
     ];
+
+    // Key-store flags: on Windows the cookie key lives in `Local State`
+    // (DPAPI-encrypted), so a mock keychain is a harmless no-op. On macOS and
+    // Linux the real key comes from the OS keychain, and forcing a mock/basic
+    // store is exactly what makes cloned cookies undecryptable ("logged out
+    // clone"). Only opt into that with CHROME_MCP_PASSWORD_STORE (headless CI).
+    if (os.platform() === 'win32' || process.env.CHROME_MCP_PASSWORD_STORE) {
+      args.push('--use-mock-keychain', '--password-store=basic');
+    }
+    if (options.headless) {
+      args.push('--headless=new', '--disable-gpu');
+    }
 
     console.error(`   Args: ${JSON.stringify(args)}`);
 
@@ -497,6 +480,15 @@ export class ChromeConnector {
     } catch (pwError) {
       console.error('⚠️ Could not attach Playwright wrapper (CDP still works):', (pwError as Error).message);
     }
+
+    this.lastLaunchInfo = {
+      profileDirectory,
+      userDataDir: finalUserDataDir,
+      reusedExisting: false,
+      clone: cloneResult,
+      processId: this.chromeProcess?.pid ?? null,
+    };
+    return this.lastLaunchInfo;
   }
 
   /**
@@ -559,6 +551,49 @@ export class ChromeConnector {
   }
 
   /**
+   * Was this Chrome process spawned by this server (as opposed to one the user
+   * already had running that we merely attached to)?
+   */
+  spawnedByUs(): boolean {
+    return this.chromeProcess !== null;
+  }
+
+  /** Waits for the spawned Chrome to disappear (polling the OS every 100ms). */
+  private async waitForProcessExit(proc: ChildProcess, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (proc.exitCode !== null || proc.signalCode !== null) return true;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return proc.exitCode !== null || proc.signalCode !== null;
+  }
+
+  /**
+   * Ask Chrome to exit through CDP before we resort to killing it.
+   *
+   * Why this matters for sessions: `taskkill /F` and SIGKILL give Chrome no
+   * chance to flush its profile stores. Cookies committed moments earlier are
+   * usually on disk already, but localStorage/LevelDB and service-worker state
+   * are buffered, so a hard kill can silently lose the login that was just
+   * created in this browser — and that login is the whole point of the profile
+   * clone. Browser.close() shuts the browser down the same way the user
+   * clicking the X would.
+   */
+  private async closeChromeGracefully(timeoutMs = 5000): Promise<boolean> {
+    const proc = this.chromeProcess;
+    if (!proc || !this.connection?.client) return false;
+    try {
+      await withTimeout(this.connection.client.Browser.close(), 3000, 'Browser.close timed out');
+    } catch (e) {
+      console.error('⚠️ Graceful Browser.close failed, will force-kill:', (e as Error).message);
+      return false;
+    }
+    const exited = await this.waitForProcessExit(proc, timeoutMs);
+    if (!exited) console.error('⚠️ Chrome did not exit after Browser.close; force-killing.');
+    return exited;
+  }
+
+  /**
    * Best-effort kill of the Chrome process this server spawned (and its
    * children) — used by close_browser and on graceful shutdown.
    */
@@ -600,7 +635,14 @@ export class ChromeConnector {
     }
 
     if (killBrowser) {
-      await this.killChromeProcessTree();
+      // Graceful first (flushes cookies/localStorage), kill only if that fails.
+      const closed = await this.closeChromeGracefully();
+      if (!closed) {
+        await this.killChromeProcessTree();
+      } else {
+        this.chromeProcess = null;
+        console.error('✅ Chrome closed gracefully (profile state flushed to disk)');
+      }
     }
 
     if (this.connection?.client) {

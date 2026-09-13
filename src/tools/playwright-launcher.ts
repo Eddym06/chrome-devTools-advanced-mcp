@@ -10,23 +10,65 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
   return [
     {
       name: 'launch_chrome_with_profile',
-      description: 'Launch Google Chrome with your real profile (cookies, extensions, sessions). IMPORTANT: Only call this tool when the user EXPLICITLY asks to open or launch Chrome. Do NOT call it automatically or proactively.',
+      description: 'Launch Google Chrome on a managed clone of your real profile (cookies, sessions, logins), so it opens already signed in. IMPORTANT: Only call this tool when the user EXPLICITLY asks to open or launch Chrome. Do NOT call it automatically or proactively.',
       inputSchema: z.object({
-        profileDirectory: z.string().default('Default').describe('Profile directory name: "Default", "Profile 1", etc.')
+        profileDirectory: z
+          .string()
+          .default('auto')
+          .describe('Profile to use: "auto" (main/logged-in profile), "Default", "Profile 1", a number, or a profile display name'),
+        cloneName: z.string().optional().describe('Managed clone folder name (default: the profile directory name)'),
+        resync: z
+          .enum(['auto', 'always', 'never'])
+          .default('auto')
+          .describe('auto: refresh the clone if stale. always: re-merge every launch. never: reuse the clone as-is'),
+        includeExtensions: z.boolean().default(false).describe('Also copy installed extensions into the clone'),
+        headless: z.boolean().default(false).describe('Run Chrome headless (no visible window)')
       }),
-      handler: async ({ profileDirectory }: any) => {
+      handler: async ({ profileDirectory = 'auto', cloneName, resync = 'auto', includeExtensions = false, headless = false }: any) => {
         try {
           console.error(`[launch_chrome] profile: ${profileDirectory}`);
-          await connector.launchWithProfile({
-            headless: false,
+          const info = await connector.launchWithProfile({
+            headless,
             profileDirectory,
+            cloneName,
+            resync,
+            includeExtensions,
             force: true,   // disconnect any existing connection first
           });
 
+          const warnings: string[] = [];
+          if (info.clone?.actionRequired) {
+            warnings.push(info.clone.actionRequired);
+          } else if (info.clone && info.clone.lockedFiles.length > 0) {
+            warnings.push(
+              `${info.clone.lockedFiles.length} profile file(s) were locked by a running Chrome; close Chrome and ` +
+                `re-run for the freshest cookies.`
+            );
+          }
+          if (info.clone && info.clone.sessionState.length === 0) {
+            warnings.push('No session state found for this profile — call list_chrome_profiles and pick the logged-in one.');
+          }
+
           return {
             success: true,
-            message: `Chrome launched with profile: ${profileDirectory}`,
-            cdpPort: connector.getPort()
+            message: `Chrome launched with profile: ${info.profileDirectory}${info.clone ? ' (managed clone, session carried over)' : ''}`,
+            cdpPort: connector.getPort(),
+            profileDirectory: info.profileDirectory,
+            userDataDir: info.userDataDir,
+            reusedExistingBrowser: info.reusedExisting,
+            sessionCarriedOver: info.clone ? !info.clone.cookiesMissing : null,
+            clone: info.clone
+              ? {
+                  name: info.clone.cloneName,
+                  copiedFiles: info.clone.copiedFiles,
+                  copiedBytes: info.clone.copiedBytes,
+                  sessionState: info.clone.sessionState,
+                  cookiesMissing: info.clone.cookiesMissing,
+                  reusedExistingClone: info.clone.reused,
+                  durationMs: info.clone.durationMs,
+                }
+              : null,
+            warnings
           };
         } catch (error) {
           return {
@@ -43,18 +85,26 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
       inputSchema: z.object({}),
       handler: async () => {
         try {
-          if (!connector.isPlaywrightManaged()) {
+          const managed = connector.spawnedByUs();
+          if (!managed && !connector.isConnected()) {
             return {
               success: false,
               message: 'No Playwright-managed browser to close'
             };
           }
 
-          await connector.disconnect();
+          // Graceful close for a browser we spawned: Chrome then flushes its
+          // profile stores (cookies/localStorage) before exiting, which is what
+          // keeps the session for the next launch. A browser the user started
+          // is only detached, never killed.
+          await connector.disconnect({ killBrowser: managed });
 
           return {
             success: true,
-            message: 'Browser closed successfully'
+            closed: managed,
+            message: managed
+              ? 'Browser closed gracefully (session state flushed to the profile clone)'
+              : 'Detached from an externally launched Chrome (left running on purpose)'
           };
         } catch (error) {
           return {

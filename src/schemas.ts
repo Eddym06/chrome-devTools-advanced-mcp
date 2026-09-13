@@ -35,6 +35,47 @@ export const EXTRA_OUTPUT_SCHEMAS: Record<string, z.ZodType> = {
   close_browser: envelope({ ...common }),
   get_browser_status: envelope({ connected: z.boolean().optional(), port: z.number().optional(), status: z.string().optional() }),
 
+  // ── Profile cloning & session carry-over
+  list_chrome_profiles: envelope({
+    cloneRoot: z.string().optional(),
+    profileCount: z.number().optional(),
+    recommendedProfile: z.string().nullable().optional(),
+    profiles: z
+      .array(
+        z
+          .object({
+            directory: z.string(),
+            name: z.string(),
+            email: z.string().nullable().optional(),
+            hasSessionState: z.boolean().optional(),
+            clone: z.unknown().nullable().optional(),
+          })
+          .passthrough()
+      )
+      .optional(),
+    ...common,
+  }),
+  clone_chrome_profile: envelope({
+    profileDirectory: z.string().optional(),
+    cloneName: z.string().optional(),
+    userDataDir: z.string().optional(),
+    sessionState: z.array(z.string()).optional(),
+    copiedFiles: z.number().optional(),
+    warnings: z.array(z.string()).optional(),
+    launched: z.boolean().optional(),
+    error: z.string().optional(),
+    ...common,
+  }),
+  sync_chrome_profile_to_real: envelope({
+    copiedFiles: z.number().optional(),
+    lockedFiles: z.array(z.string()).optional(),
+    wroteInto: z.string().optional(),
+    warnings: z.array(z.string()).optional(),
+    error: z.string().optional(),
+    ...common,
+  }),
+  remove_chrome_profile_clone: envelope({ removed: z.string().optional(), cloneName: z.string().optional(), error: z.string().optional(), ...common }),
+
   // ── Navigation & tabs
   browser_action: envelope(common),
   manage_tabs: envelope({

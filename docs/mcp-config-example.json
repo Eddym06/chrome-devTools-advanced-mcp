@@ -2,7 +2,12 @@
   "mcpServers": {
     "chrome-devtools-advanced-mcp": {
       "command": "npx",
-      "args": ["-y", "chrome-devtools-advanced-mcp", "--port=9222"]
+      "args": ["-y", "chrome-devtools-advanced-mcp", "--port=9222"],
+      "env": {
+        "CHROME_MCP_PROFILE_DIR": "~/.chrome-mcp/profiles",
+        "CHROME_MCP_PROFILE_RESYNC": "auto",
+        "CHROME_MCP_PROFILE_WAIT_MS": "0"
+      }
     }
   }
 }

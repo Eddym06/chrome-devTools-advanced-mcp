@@ -35,6 +35,9 @@ const REQUIRES_CONFIRM = new Set<string>([
   'clear_all_mocks',
   'clear_all_injections',
   'remove_injection',
+  // Writes into / deletes profile data on disk.
+  'sync_chrome_profile_to_real',
+  'remove_chrome_profile_clone',
 ]);
 
 function confirmationRequired(toolName: string, args: any): boolean {

@@ -86,15 +86,44 @@ real MCP protocol against it.
 
 1. Server starts → logs `[MCP] chrome-devtools-advanced-mcp vX starting...`.
 2. `get_browser_status` → not connected (expected before launch).
-3. User asks to open Chrome → AI calls `launch_chrome_with_profile`
-   (`profileDirectory: "Default"`).
-4. `manage_tabs` (`action:"list"`) returns the open tabs.
-5. Call `show_advanced_tools` only when a task needs the advanced toolset.
+3. Look at your profiles: `list_chrome_profiles` (no launch needed).
+4. User asks to open Chrome → AI calls `launch_chrome_with_profile`
+   (`profileDirectory: "auto"` = your main/logged-in profile). Chrome opens on a
+   **persistent clone** of that profile, so it is already signed in.
+5. `manage_tabs` (`action:"list"`) returns the open tabs.
+6. Call `show_advanced_tools` only when a task needs the advanced toolset.
+
+> **Chrome must be closed for the very first clone.** Chrome keeps an exclusive
+> lock on its cookie database while it runs, so the session can only be copied
+> when no Chrome window (including the background/tray process) is open. After
+> that one time the clone owns its own session and keeps it forever.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CHROME_MCP_PROFILE_DIR` | `~/.chrome-mcp/profiles` | Where managed profile clones live |
+| `CHROME_MCP_REAL_USER_DATA_DIR` | auto-detected | Real Chrome user-data dir (portable/Chromium forks) |
+| `CHROME_MCP_PROFILE_RESYNC` | `auto` | `auto` \| `always` \| `never` — how often the clone re-reads the real profile |
+| `CHROME_MCP_PROFILE_WAIT_MS` | `0` | Wait this long for a running Chrome to be closed before giving up on the cookies |
+| `CHROME_MCP_NO_CLONE` | unset | `1` = launch directly on the real user-data dir (no clone; CDP usually refuses) |
+| `CHROME_MCP_CLONE_EXTENSIONS` | unset | `1` = copy extensions into the clone too |
+| `CHROME_MCP_PASSWORD_STORE` | unset | `1` = force `--use-mock-keychain --password-store=basic` (headless CI on macOS/Linux) |
+| `CHROME_MCP_ALLOW_FILE_URLS` | unset | `1` = allow `file://` navigation |
+| `CHROME_MCP_CONFIRM` | `off` | `on` = destructive tools need `_confirm:true` |
+| `MCP_LOG_LEVEL` | `info` | Protocol log verbosity |
+| `CHROME_MCP_E2E` | unset | `1` = run the real-Chrome end-to-end tests |
 
 ## Troubleshooting
 
 - **"No Chrome browser detected"** → call `launch_chrome_with_profile` first;
   the server never auto-launches a window.
+- **The browser opens logged out** → Chrome was still running while the clone
+  was created (its cookie DB is locked): close Chrome, then run
+  `clone_chrome_profile` again (about one second), or pass
+  `waitForChromeCloseSeconds` so it waits for you.
+- **Wrong Google account** → `list_chrome_profiles` shows every profile with
+  its account, then `clone_chrome_profile` with `profile: "<name or Profile N>"`.
 - **Chrome doesn't start** → the log file is
   `%TEMP%/chrome-mcp-debug.log` (Windows) / `/tmp/chrome-mcp-debug.log`
   (macOS/Linux). Make sure Chrome is not blocked by policies on your machine.

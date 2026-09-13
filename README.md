@@ -11,9 +11,10 @@ This Model Context Protocol (MCP) server enables AI assistants like Claude, Roo 
 
 ## ✨ Why Use This?
 
-*   **🕵️ "Human" Navigation:** Uses your real Chrome profile. If you're logged into LinkedIn, Gmail, or your corporate ERP, your AI assistant is too.
-*   **🛡️ Undetectable:** Advanced "Shadow Profile" technology prevents browser automation blocking on complex sites.
-*   **🛠️ Robust Toolset:** 90+ specialized tools, plus MCP resources and prompts, optimized for data scraping, specific element extraction, and visual analysis.
+*   **🕵️ "Human" Navigation:** Uses a persistent clone of your real Chrome profile (cookies, localStorage, logged-in accounts). If you're logged into LinkedIn, Gmail, or your corporate ERP, your AI assistant is too — and the session survives between runs.
+*   **👤 Profile Cloning:** `list_chrome_profiles` finds every profile on the machine, `clone_chrome_profile` mirrors the one you want into `~/.chrome-mcp/profiles/…`, and `sync_chrome_profile_to_real` pushes logins back into your own Chrome.
+*   **🛡️ Undetectable:** Stealth mode is applied per tab, and Chrome runs with the automation switch excluded.
+*   **🛠️ Robust Toolset:** 94+ specialized tools, plus MCP resources and prompts, optimized for data scraping, specific element extraction, and visual analysis.
 *   **⚡ Fast & Safe:** Safely executes scripts and screenshots, with intelligent output truncation to prevent crashing your AI context.
 
 ---
@@ -156,9 +157,9 @@ exports/downloads are sandboxed to your working dir or temp folder.
 ## 📚 Documentation
 
 *   **[docs/USAGE_GUIDE.md](docs/USAGE_GUIDE.md)** — practical workflows for
-    the AI on the current (v1.4) tool vocabulary.
+    the AI on the current (v1.5) tool vocabulary.
 *   **[docs/TOOLS.md](docs/TOOLS.md)** — complete, machine-checked reference of
-    all 90 tools.
+    all 94 tools.
 *   **[docs/INSTALL.md](docs/INSTALL.md)** — installation & configuration.
 *   **[docs/CHANGELOG.md](docs/CHANGELOG.md)** — release notes.
 

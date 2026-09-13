@@ -18,6 +18,7 @@ import { createCaptureTools } from './tools/capture.js';
 import { createSessionTools } from './tools/session.js';
 import { createSystemTools } from './tools/system.js';
 import { createPlaywrightLauncherTools } from './tools/playwright-launcher.js';
+import { createChromeProfileTools } from './tools/chrome-profiles.js';
 import { createNetworkAccessibilityTools } from './tools/network-accessibility.js';
 import { createAdvancedNetworkTools } from './tools/advanced-network.js';
 import { createConsoleTools } from './tools/console.js';
@@ -54,6 +55,7 @@ export function buildToolRegistry(connector: ChromeConnector): ToolRegistry {
 
     // Essential browser control
     ...createPlaywrightLauncherTools(connector),
+    ...createChromeProfileTools(connector),
     ...createNavigationTools(connector),
 
     // Basic interactions

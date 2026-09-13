@@ -2,6 +2,47 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.6.0] - 2026-09-13
+
+### 👤 Real profile cloning & session carry-over (4 new tools)
+- **`list_chrome_profiles`** — lists the real Chrome profiles (display name, Google account,
+  `last_used`, whether session state exists) plus the managed clone status of each one. Works
+  without a browser connection.
+- **`clone_chrome_profile`** — mirrors a real profile (cookies, localStorage, IndexedDB, saved
+  passwords, preferences) into a **persistent** managed folder (`~/.chrome-mcp/profiles/<profile>`,
+  overridable with `CHROME_MCP_PROFILE_DIR`), so the automated browser opens already signed in and
+  keeps its session between MCP runs. Supports `"auto"` (last-used logged-in profile), profile
+  names/directories, `launch:true` to open Chrome right away, and `waitForChromeCloseSeconds`.
+- **`sync_chrome_profile_to_real`** — pushes logins created in the clone back into the real Chrome
+  profile (session files only, never forced over locked files).
+- **`remove_chrome_profile_clone`** — deletes a clone; the real profile is never touched.
+
+### 🛠 Reliability
+- **The profile clone replaced the old `os.tmpdir()` "shadow profile".** It used to be re-copied
+  with `robocopy`/`rsync` into the temp dir on every launch, so every login was lost on cleanup and
+  the shell-out gave no error detail. Copying is now pure Node, incremental by mtime, skips
+  caches/GPU shader/Service Worker trees, tolerates locked files, and reports them individually.
+- **`Local State` is copied with the cookies.** It holds the OS-crypt key; without it the cloned
+  cookies are undecryptable and the clone opens logged out.
+- **Key-store flags are now platform-correct.** `--use-mock-keychain --password-store=basic` is only
+  passed on Windows (where the key lives in `Local State`) or when `CHROME_MCP_PASSWORD_STORE=1`
+  (headless CI); forcing a mock keychain on macOS/Linux made cloned cookies undecryptable.
+- **`close_browser` closes gracefully** (`Browser.close`, then kills only if needed) so Chrome
+  flushes cookies/localStorage before exiting — a hard `taskkill /F` could silently drop the login
+  just created in the automated browser. External browsers are still only detached.
+- **Any profile can be cloned**, not just `Default` (previously a non-default profile launched
+  directly against the live user-data dir and failed whenever Chrome was running).
+- **First-time clone forces the cookie files** over the empty DB Chrome creates inside a fresh
+  clone, and stale `SingletonLock*` files are removed before every launch.
+- `launch_chrome_with_profile` now honours `headless`, defaults to `"auto"` profile selection, and
+  returns the clone statistics (files copied, session items, warnings).
+
+### 🧪 Tests & docs
+- 12 new unit tests (`src/tests/chrome-profiles.test.ts`) covering discovery, resolution, cloning,
+  incremental merge, cookie freshness, sync-back and removal.
+- Docs: tool count 90 → 94, new *Profile & session* section in the usage guide, env-var table and
+  troubleshooting entries in the install guide.
+
 ## [1.5.0] - 2026-08-19
 
 ### 🔒 Security
