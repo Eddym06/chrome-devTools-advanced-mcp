@@ -90,6 +90,27 @@ describe('rankAttachTarget', () => {
     expect(target?.port).toBe(9223);
   });
 
+  it('skips a browser whose user-data dir we do not recognise (no cross-talk between servers)', () => {
+    // Another MCP server's clone on its own port: drivable, but not ours.
+    const other = cand({ port: 9224, kind: 'unknown', profileDirectory: 'Default' });
+    const { target, reason } = rankAttachTarget([other], want);
+    expect(target).toBeNull();
+    expect(reason).toMatch(/unrecognised user-data dir/);
+    expect(reason).toMatch(/attach_to_running_chrome/);
+  });
+
+  it('still accepts an unrecognised browser when the caller asks for it explicitly', () => {
+    const other = cand({ port: 9224, kind: 'unknown', profileDirectory: 'Default' });
+    const { target } = rankAttachTarget([other], { ...want, acceptUnknownKind: true });
+    expect(target?.port).toBe(9224);
+  });
+
+  it('accepts an unrecognised browser that lives on our own port', () => {
+    const ours = cand({ port: 9223, kind: 'unknown', profileDirectory: 'Default' });
+    const { target } = rankAttachTarget([ours], want);
+    expect(target?.port).toBe(9223);
+  });
+
   it('never picks an endpoint that is not a drivable browser', () => {
     const { target, reason } = rankAttachTarget(
       [

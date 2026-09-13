@@ -161,9 +161,18 @@ Related environment variables: `CHROME_MCP_PROFILE_DIR` (where clones live),
 scans the usual CDP ports (9222-9225, 9333 and its own `--port`), verifies the
 endpoint is a real browser (not a WebView2/Electron widget), reads the owning
 process command line to learn which `--user-data-dir`/`--profile-directory`
-that browser uses, and **reuses it** — your real profile first, then a managed
-clone. Two Chromes cannot share a user-data dir, so reusing is always better
-than launching a second one.
+that browser uses, and **reuses it** — but only when it can tell what it is:
+the real profile, a clone under *this* server's `CHROME_MCP_PROFILE_DIR`, or any
+browser on *its own* port. An endpoint with an unrecognised user-data dir (for
+example another MCP server's clone) is skipped, so two servers never hijack each
+other's browser. Two Chromes cannot share a user-data dir, so reusing is always
+better than launching a second one.
+
+To deliberately use *any* browser that is already open, call the explicit tool:
+
+```json
+{ "tool": "attach_to_running_chrome", "args": { "profile": "auto" } }
+```
 
 When nothing is attachable, `attach_to_running_chrome` returns the reason plus
 the recipe:

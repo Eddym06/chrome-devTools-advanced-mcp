@@ -151,10 +151,16 @@ export function classifyOwnerKind(
 /**
  * Picks which already-running browser to attach to, if any.
  *
- * Priority: the real profile the caller asked for → a clone of it → any clone
- * → the caller's preferred port. Attaching to a browser we did not spawn is
- * always preferable to spawning a second Chrome: two Chromes cannot share one
- * user-data dir, so a duplicate would be either a no-op or an empty profile.
+ * Priority: the caller's own port → the real profile it asked for → a clone of
+ * it. Attaching to a browser we did not spawn is usually better than spawning a
+ * second Chrome (two Chromes cannot share a user-data dir)…
+ *
+ * …but only when we can tell WHAT we are attaching to. An endpoint whose
+ * user-data dir we do not recognise (another MCP server's clone, someone else's
+ * Chromium with a debug port) is skipped unless it is on the caller's own port
+ * or the caller explicitly asks for it (`acceptUnknownKind`). Otherwise two MCP
+ * servers on different ports hijack each other's browser, which is exactly the
+ * kind of cross-talk that is impossible to debug from the outside.
  */
 export function rankAttachTarget(
   candidates: CdpOwnerInfo[],
@@ -163,17 +169,34 @@ export function rankAttachTarget(
     cloneRoot?: string;
     profileDirectory?: string;
     preferredPort?: number;
+    /** Also consider endpoints whose user-data dir we do not recognise. */
+    acceptUnknownKind?: boolean;
   }
 ): { target: CdpOwnerInfo | null; reason: string } {
-  const usable = candidates.filter((c) => c.ok);
+  const skipped: CdpOwnerInfo[] = [];
+  const usable = candidates.filter((c) => {
+    if (!c.ok) return false;
+    const known = c.kind !== 'unknown' || c.port === want.preferredPort;
+    if (!known && want.acceptUnknownKind !== true) {
+      skipped.push(c);
+      return false;
+    }
+    return true;
+  });
+
   if (usable.length === 0) {
     const rejected = candidates.filter((c) => c.reason).map((c) => `port ${c.port}: ${c.reason}`);
+    const skippedNote = skipped.length
+      ? ` — skipped ${skipped
+          .map((c) => `port ${c.port} (unrecognised user-data dir; use attach_to_running_chrome to use it on purpose)`)
+          .join(', ')}`
+      : '';
     return {
       target: null,
       reason:
         candidates.length === 0
           ? 'no CDP endpoint found on the scanned ports'
-          : `no drivable browser found (${rejected.join('; ')})`,
+          : `no drivable browser to reuse (${rejected.join('; ') || 'nothing matched'})${skippedNote}`,
     };
   }
 

@@ -27,7 +27,13 @@ export function createPlaywrightLauncherTools(connector: ChromeConnector) {
       handler: async ({ profile = 'auto', ports }: any) => {
         try {
           const wanted = resolveProfileDirectory(profile);
-          const found = await connector.findAttachableBrowser({ profileDirectory: wanted, ports, deep: true });
+          const found = await connector.findAttachableBrowser({
+            profileDirectory: wanted,
+            ports,
+            deep: true,
+            // Explicit tool: the user asked to attach to whatever is open.
+            acceptUnknownKind: true,
+          });
 
           if (found.target) {
             const attached = await connector.attachTo(found.target);

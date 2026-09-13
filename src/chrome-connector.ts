@@ -1013,6 +1013,8 @@ export class ChromeConnector {
     cloneRoot?: string;
     /** Also inspect the owning process (slower) to learn its profile. */
     deep?: boolean;
+    /** Consider endpoints whose user-data dir we do not recognise. */
+    acceptUnknownKind?: boolean;
   } = {}): Promise<{ target: CdpOwnerInfo | null; candidates: CdpOwnerInfo[]; reason: string }> {
     const ports = options.ports?.length ? options.ports : DEFAULT_ATTACH_PORTS;
     const deep = options.deep === true;
@@ -1052,6 +1054,7 @@ export class ChromeConnector {
       cloneRoot: options.cloneRoot ?? getCloneRoot(),
       profileDirectory: options.profileDirectory,
       preferredPort: this.port,
+      acceptUnknownKind: options.acceptUnknownKind,
     });
     return { target, candidates, reason };
   }

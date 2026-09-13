@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.8.1] - 2026-09-13
+
+### 🐛 No more cross-talk between MCP servers
+Found while running the new-user demo with two servers at once (the host's on
+9224 and a demo one on 9413): the demo server's `launch_chrome_with_profile`
+**attached to the other server's clone** instead of launching its own browser,
+because automatic attach treated any drivable endpoint as fair game.
+
+- Automatic attach (launch-first path and lazy connect) now only reuses a
+  browser whose user-data dir we can identify (the real profile, or a clone under
+  *our* `CHROME_MCP_PROFILE_DIR`) or one listening on *our own* port. An
+  unrecognised endpoint is skipped with an explanatory reason.
+- `attach_to_running_chrome` still attaches to anything, on purpose: that is the
+  explicit "use the browser I have open" tool (`acceptUnknownKind`).
+- Also fixed in this pass: a fresh clone no longer inherits the source's
+  App-Bound key (it gets its own on first launch); `get_html`'s demo artefact
+  aside, screenshots/navigation in the demo were fine.
+
+Tests: 3 new cases (17 in that file). Docs updated.
+
 ## [1.8.0] - 2026-09-13
 
 ### 🚀 One-command onboarding (`setup_chrome_profile`)
