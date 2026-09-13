@@ -14,7 +14,7 @@ import { promisify } from 'util';
 
 import { withTimeout } from './utils/helpers.js';
 import { reportProgress } from './utils/log.js';
-import { cloneChromeProfile, type CloneResult } from './utils/chrome-profiles.js';
+import { cloneChromeProfile, getRealUserDataDir, type CloneResult } from './utils/chrome-profiles.js';
 
 const execAsync = promisify(exec);
 
@@ -116,6 +116,10 @@ export class ChromeConnector {
    */
   private getPlatformPaths(): { executable: string; userDataDir: string } {
     const platform = os.platform();
+    // Single source of truth for the user-data dir: `getRealUserDataDir()`
+    // knows about CHROME_MCP_REAL_USER_DATA_DIR, so an override actually takes
+    // effect here too (portable installs, Chromium forks, tests).
+    const userDataDir = getRealUserDataDir();
 
     switch (platform) {
       case 'win32':
@@ -132,19 +136,16 @@ export class ChromeConnector {
           console.error('⚠️ Could not find Chrome in common locations. Using default:', executable);
         }
 
-        return {
-          executable,
-          userDataDir: `${process.env.LOCALAPPDATA}\\Google\\Chrome\\User Data`
-        };
+        return { executable, userDataDir };
       case 'darwin':
         return {
           executable: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-          userDataDir: `${process.env.HOME}/Library/Application Support/Google/Chrome`
+          userDataDir
         };
       case 'linux':
         return {
           executable: '/usr/bin/google-chrome',
-          userDataDir: `${process.env.HOME}/.config/google-chrome`
+          userDataDir
         };
       default:
         throw new Error(`Unsupported platform: ${platform}`);
@@ -173,15 +174,15 @@ export class ChromeConnector {
         // Not a forced re-launch: just ensure the window is visible and return.
         console.error('✅ Already connected to a Chrome instance. Bringing window to foreground...');
         await this.bringWindowToForeground();
-        return (
-          this.lastLaunchInfo ?? {
-            profileDirectory: options.profileDirectory ?? 'Default',
-            userDataDir: null,
-            reusedExisting: true,
-            clone: null,
-            processId: this.chromeProcess?.pid ?? null,
-          }
-        );
+        const previous = this.lastLaunchInfo;
+        return {
+          profileDirectory: previous?.profileDirectory ?? options.profileDirectory ?? 'Default',
+          userDataDir: previous?.userDataDir ?? null,
+          // We did NOT spawn anything this time: we attached to the live browser.
+          reusedExisting: true,
+          clone: previous?.clone ?? null,
+          processId: previous?.processId ?? this.chromeProcess?.pid ?? null,
+        };
       }
       // Forced re-launch (e.g. user explicitly called launch_edge or launch_chrome):
       // disconnect from the current browser before spawning a new one.
