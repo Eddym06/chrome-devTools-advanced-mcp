@@ -625,6 +625,50 @@ function isCriticalSessionFile(entry: string): boolean {
   return entry.startsWith('Network/Cookies') || entry.startsWith('Cookies');
 }
 
+/** Cheap change-detector for a file (null when it is missing/locked). */
+function statSignature(file: string | undefined): string | null {
+  if (!file) return null;
+  const s = statOrNull(file);
+  return s ? `${s.size}:${Math.round(s.mtimeMs)}` : null;
+}
+
+function statOrNull(file: string): fs.Stats | null {
+  try {
+    return fs.statSync(file);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Wait until a file stops changing before copying it.
+ *
+ * Chrome drops the exclusive lock on its cookie DB early in shutdown and keeps
+ * writing for a moment afterwards, so "the lock is gone" does not mean "the DB
+ * is final". Requiring a stable size+mtime avoids archiving a half-written
+ * cookie jar — which shows up as a clone that is mysteriously logged out.
+ */
+async function waitForStableFile(file: string, stableMs = 900, timeoutMs = 6000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last: string | null = null;
+  let stableSince = 0;
+
+  while (Date.now() < deadline) {
+    const current = statSignature(file);
+    if (current === null) {
+      last = null;
+      stableSince = 0;
+    } else if (current === last) {
+      if (stableSince === 0) stableSince = Date.now();
+      if (Date.now() - stableSince >= stableMs) return;
+    } else {
+      last = current;
+      stableSince = 0;
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
 /** Is a Chrome/Chromium process running right now (best effort)? */
 export async function isChromeRunning(): Promise<boolean> {
   const platform = os.platform();
@@ -748,10 +792,28 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
     );
     const deadline = Date.now() + waitMs;
 
+    // Chrome releases the cookie DB lock *before* it finishes writing during
+    // shutdown, so copying the instant the lock clears can capture a DB that is
+    // still being rewritten (observed: source mtime moved 8s after the copy).
+    // Wait until the file stops changing, and redo the copy if it changed.
+    const sourceCookieDb = ['Network/Cookies', 'Cookies']
+      .map((rel) => path.join(sourceProfile, rel))
+      .find((file) => fs.existsSync(file));
+
+    let extraPasses = 0;
+
     // Chrome deliberately takes an exclusive lock on the cookie DB, so a
     // running Chrome is the one thing that blocks the session carry-over.
     // Retry the session files until the deadline instead of failing outright.
     for (;;) {
+      // Only pay for the stability wait when the DB was touched seconds ago
+      // (i.e. Chrome is probably still shutting down); a normal launch skips it.
+      if (sourceCookieDb) {
+        const st = statOrNull(sourceCookieDb);
+        if (st && Date.now() - st.mtimeMs < 5000) await waitForStableFile(sourceCookieDb);
+      }
+      const before = statSignature(sourceCookieDb);
+
       ctx = newContext('newest', options, forceCritical);
       await mergeProfileIntoClone(sourceProfile, clonePath, profileDirectory, ctx, {
         includeOptional,
@@ -760,7 +822,17 @@ export async function cloneChromeProfile(options: CloneOptions = {}): Promise<Cl
       });
 
       const lockedThisPass = ctx.lockedFiles.filter(isCriticalSessionFile);
-      if (lockedThisPass.length === 0 || Date.now() >= deadline) break;
+      if (lockedThisPass.length === 0 || Date.now() >= deadline) {
+        // Nothing was locked, but did the source change under us (Chrome still
+        // shutting down)? Then give it one more bounded pass.
+        const after = statSignature(sourceCookieDb);
+        const moved = before !== null && after !== null && before !== after;
+        if (!moved || extraPasses >= 2) break;
+        extraPasses++;
+        protocolLog('debug', 'chrome-profiles', { event: 'source-changed-during-copy', pass: extraPasses });
+        await new Promise((r) => setTimeout(r, 1200));
+        continue;
+      }
       await new Promise((r) => setTimeout(r, 2000));
     }
 
