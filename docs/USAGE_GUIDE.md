@@ -79,6 +79,43 @@ Related environment variables: `CHROME_MCP_PROFILE_DIR` (where clones live),
 `CHROME_MCP_PROFILE_WAIT_MS`, `CHROME_MCP_CLONE_EXTENSIONS=1`,
 `CHROME_MCP_NO_CLONE=1` (opt out of cloning entirely).
 
+### Reusing a Chrome that is already open (`attach_to_running_chrome`)
+
+`launch_chrome_with_profile` is **attach-first**: before spawning anything it
+scans the usual CDP ports (9222-9225, 9333 and its own `--port`), verifies the
+endpoint is a real browser (not a WebView2/Electron widget), reads the owning
+process command line to learn which `--user-data-dir`/`--profile-directory`
+that browser uses, and **reuses it** — your real profile first, then a managed
+clone. Two Chromes cannot share a user-data dir, so reusing is always better
+than launching a second one.
+
+When nothing is attachable, `attach_to_running_chrome` returns the reason plus
+the recipe:
+
+```json
+{ "tool": "attach_to_running_chrome", "args": { "profile": "auto" } }
+```
+
+**The hard limit:** a Chrome can only be driven if it was started with
+`--remote-debugging-port`, and Chrome 136+ **ignores that switch when the
+browser uses its default user-data directory** (anti-cookie-theft change). So an
+already-open *normal* Chrome cannot be attached to, period. Two ways out:
+
+1. **Drive a clone** (keeps your session): close Chrome once, then
+   `clone_chrome_profile { "launch": true }` and keep using that window — the
+   MCP attaches to it from then on.
+2. **Make Chrome expose the port:** start it with a non-default user-data dir
+   plus the port, then log in once in that window:
+
+   ```
+   chrome.exe --remote-debugging-port=9223 --user-data-dir="%USERPROFILE%\.chrome-mcp\daily" --profile-directory=Default
+   ```
+
+   `attach_to_running_chrome` then finds and reuses that browser automatically.
+
+Pass `ifProfileInUse: "fail"` to `launch_chrome_with_profile` if you would
+rather get an explicit failure than a clone when your live Chrome is in the way.
+
 ---
 
 ## 🧭 Navigation & Tabs (consolidated tools)

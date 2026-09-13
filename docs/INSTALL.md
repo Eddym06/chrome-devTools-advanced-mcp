@@ -136,6 +136,16 @@ real MCP protocol against it.
   `--remote-debugging-port=9222` for their own widgets. Start this server with a
   free port (`--port=9333`) or close that app; the server refuses to attach to a
   non-browser endpoint on purpose.
+- **The MCP opens its own Chrome instead of using the one I have open** → a Chrome
+  can only be driven through DevTools, and it only opens that endpoint when it was
+  started with `--remote-debugging-port`. Chrome 136+ additionally ignores that
+  switch for the *default* user-data directory, so an already-open normal Chrome
+  cannot be attached to. Call `attach_to_running_chrome` to see what is attachable
+  (and why nothing is), then either drive the managed clone
+  (`clone_chrome_profile` with `launch:true`) or restart Chrome as
+  `chrome.exe --remote-debugging-port=9223 --user-data-dir="%USERPROFILE%\.chrome-mcp\daily" --profile-directory=Default`
+  and sign in once in that window — from then on the MCP attaches to it and never
+  launches a duplicate.
 - **Cookie values look redacted** → by design: pass `includeValues:true` to
   `get_cookies` / `export_session` / `manage_browser_session` when you truly
   need them.

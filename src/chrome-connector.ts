@@ -8,6 +8,7 @@ import CDP from 'chrome-remote-interface';
 import { chromium, type BrowserContext } from 'playwright';
 import { spawn, type ChildProcess, exec } from 'child_process';
 import * as fs from 'fs';
+import * as net from 'net';
 import * as path from 'path';
 import * as os from 'os';
 import { promisify } from 'util';
@@ -15,12 +16,22 @@ import { promisify } from 'util';
 import { withTimeout } from './utils/helpers.js';
 import { reportProgress } from './utils/log.js';
 import {
+  attachRecipe,
   cloneChromeProfile,
+  getCloneRoot,
   getRealUserDataDir,
+  isProfileInUse,
   resolveProfileDirectory,
+  DEFAULT_PROFILE_DIRECTORY,
   type CloneResult,
 } from './utils/chrome-profiles.js';
-import { classifyCdpEndpoint } from './utils/cdp-endpoint.js';
+import { classifyCdpEndpoint, parseChromeCommandLine, rankAttachTarget, classifyOwnerKind, type CdpOwnerInfo } from './utils/cdp-endpoint.js';
+
+/**
+ * Ports probed when looking for an already-running browser to attach to
+ * (on top of the server's own `--port`).
+ */
+const DEFAULT_ATTACH_PORTS = [9222, 9223, 9224, 9225, 9333];
 
 const execAsync = promisify(exec);
 
@@ -70,6 +81,15 @@ export interface LaunchOptions {
   resync?: 'auto' | 'always' | 'never';
   /** Also copy installed extensions into the clone. */
   includeExtensions?: boolean;
+  /**
+   * What to do when a Chrome with the requested profile is already running but
+   * exposes no debug port (so it cannot be attached to):
+   * `warn-and-clone` (default) launches the managed clone as usual and reports
+   * it; `fail` refuses and returns the recipe to make that Chrome attachable.
+   */
+  ifProfileInUse?: 'warn-and-clone' | 'fail';
+  /** Scan these extra ports for an existing browser to attach to. */
+  attachPorts?: number[];
 }
 
 /** What actually happened during a launch (clone included) — reported to tools. */
@@ -82,6 +102,10 @@ export interface LaunchInfo {
   /** Clone statistics, when a clone was created or refreshed. */
   clone: CloneResult | null;
   processId: number | null;
+  /** Port we attached to instead of launching (when reusedExisting). */
+  attachedPort?: number;
+  /** What that browser was: the real profile, a managed clone, … */
+  attachedKind?: 'real-profile' | 'managed-clone' | 'unknown';
 }
 
 export class ChromeConnector {
@@ -197,34 +221,52 @@ export class ChromeConnector {
     }
 
     try {
-      // Check if a real browser is already running on the port and connect to it.
-      const probe = await this.probeCdpPort();
-      if (probe.ok) {
-        await this.connect();
-        console.error(`✅ Detected and connected to existing browser on port ${this.port}`);
-
-        // Ensure a visible page exists.
+      // 1. Is there a browser we can drive already? Prefer attaching over
+      //    spawning: two Chromes cannot share a user-data dir, so a duplicate
+      //    would either be a no-op or an empty profile.
+      const attach = await this.findAttachableBrowser({
+        profileDirectory: options.profileDirectory === 'auto' ? undefined : options.profileDirectory,
+        // An explicit launch can afford the slower process inspection: it tells
+        // us whether what we found is the user's real profile or a clone.
+        deep: true,
+      });
+      if (attach.target) {
+        const attached = await this.attachTo(attach.target);
         const tabs = await this.listTabs();
-        const hasPages = tabs.some(t => t.type === 'page');
-        if (!hasPages) {
-          console.error('⚠️ No open pages – creating one...');
+        if (!tabs.some((t) => t.type === 'page')) {
           try { await this.connection?.client.Target.createTarget({ url: 'chrome://newtab/' }); } catch { }
         }
         await this.bringWindowToForeground();
-        return {
-          profileDirectory: options.profileDirectory ?? 'Default',
-          userDataDir: null,
+        this.lastLaunchInfo = {
+          profileDirectory: attach.target.profileDirectory ?? DEFAULT_PROFILE_DIRECTORY,
+          userDataDir: attach.target.flags?.userDataDir ?? null,
           reusedExisting: true,
           clone: null,
-          processId: this.chromeProcess?.pid ?? null,
+          processId: null,
+          attachedPort: attach.target.port,
+          attachedKind: attach.target.kind,
         };
+        console.error(`✅ Reusing the browser already open on port ${attach.target.port} (${attach.reason})`);
+        return this.lastLaunchInfo;
       }
 
-      // The port is taken by something that is NOT a drivable browser (an
-      // embedded Chromium widget, a leftover service…). Spawning Chrome on that
-      // port cannot work (the debug port would never bind) and silently driving
-      // the other process is worse, so fail fast with an actionable message.
-      if (probe.occupied) {
+      // 2. Nothing attachable: if the requested profile is locked by a Chrome
+      //    without a debug port, say so precisely instead of guessing.
+      if (options.ifProfileInUse === 'fail') {
+        const wanted = resolveProfileDirectory(options.profileDirectory ?? 'auto');
+        const busy = isProfileInUse({ profileDirectory: wanted });
+        if (busy.inUse) {
+          throw new Error(
+            `Chrome is already running with profile "${wanted}" but exposes no debug port ` +
+              `(${busy.signal}), so it cannot be attached to. ${attachRecipe(wanted).why}`
+          );
+        }
+      }
+
+      // 3. The port may be taken by something that is NOT a drivable browser:
+      //    spawning Chrome there cannot work, so fail fast and actionably.
+      const probe = await this.probeCdpPort();
+      if (probe.occupied && !probe.ok) {
         throw new Error(
           `CDP port ${this.port} is already in use by ${
             probe.processName ? `"${probe.processName}"` : 'another process'
@@ -235,8 +277,10 @@ export class ChromeConnector {
         );
       }
     } catch (e) {
-      // Re-throw our own actionable error; swallow "port free" failures.
-      if (e instanceof Error && e.message.startsWith('CDP port')) throw e;
+      // Re-throw our own actionable errors; swallow "port free" failures.
+      if (e instanceof Error && (e.message.startsWith('CDP port') || e.message.startsWith('Chrome is already running'))) {
+        throw e;
+      }
       // Port free or not a real browser – proceed to launch.
     }
 
@@ -852,7 +896,10 @@ export class ChromeConnector {
    * Electron apps) also answers `/json/version`, so the payload alone is not
    * enough — we also look up which process owns the port.
    */
-  async probeCdpPort(): Promise<{
+  async probeCdpPort(
+    port: number = this.port,
+    opts: { verifyProcess?: boolean } = {}
+  ): Promise<{
     occupied: boolean;
     ok: boolean;
     browser?: string;
@@ -860,9 +907,10 @@ export class ChromeConnector {
     processName?: string;
     reason?: string;
   }> {
+    const verifyProcess = opts.verifyProcess !== false;
     const version = await new Promise<Record<string, any> | null>((resolve) => {
       void import('http').then((http) => {
-        const req = http.default.get(`http://localhost:${this.port}/json/version`, { timeout: 2000 }, (res) => {
+        const req = http.default.get(`http://localhost:${port}/json/version`, { timeout: 2000 }, (res) => {
           let data = '';
           res.on('data', (chunk: Buffer) => { data += chunk.toString(); });
           res.on('end', () => {
@@ -881,13 +929,41 @@ export class ChromeConnector {
     if (!version) {
       // Nothing answers on /json/version: either the port is free or it is held
       // by an unrelated service (both mean "we cannot attach").
-      return { occupied: await this.isPortOccupied(), ok: false };
+      return { occupied: await this.isPortOccupied(port), ok: false };
     }
 
-    const processName = await this.processNameOnPort();
+    // Classify from the payload first: a WebView2/Electron endpoint is rejected
+    // on its user agent alone, which avoids a slow OS process lookup.
+    const fromPayload = classifyCdpEndpoint(version, null);
+    if (!fromPayload.ok) {
+      console.error(`[Port-check] ${port}: Browser="${fromPayload.browser}" UA="${fromPayload.userAgent}" → NOT a browser (${fromPayload.reason})`);
+      return {
+        occupied: true,
+        ok: false,
+        browser: fromPayload.browser,
+        userAgent: fromPayload.userAgent,
+        reason: fromPayload.reason,
+      };
+    }
+
+    // The process check (which OS process owns the port) needs a shell-out, so
+    // it is only done when the caller asks for it: the silent lazy-connect path
+    // runs on every tool call and must stay in the low milliseconds.
+    if (!verifyProcess) {
+      console.error(`[Port-check] ${port}: Browser="${fromPayload.browser}" (payload-only check) → REAL browser`);
+      return {
+        occupied: true,
+        ok: true,
+        browser: fromPayload.browser,
+        userAgent: fromPayload.userAgent,
+      };
+    }
+
+    const owner = await this.portOwner(port);
+    const processName = owner.processName;
     const verdict = classifyCdpEndpoint(version, processName);
     console.error(
-      `[Port-check] ${this.port}: Browser="${verdict.browser}" UA="${verdict.userAgent}" proc="${processName ?? '?'}" → ${
+      `[Port-check] ${port}: Browser="${verdict.browser}" UA="${verdict.userAgent}" proc="${processName ?? '?'}" → ${
         verdict.ok ? 'REAL browser' : `NOT a browser (${verdict.reason})`
       }`
     );
@@ -901,12 +977,112 @@ export class ChromeConnector {
     };
   }
 
+  /** PID + image name + command line of the process listening on a port. */
+  private async portOwner(port: number): Promise<{ pid: number | null; processName: string | null; commandLine: string | null }> {
+    const platform = os.platform();
+    try {
+      if (platform === 'win32') {
+        const { stdout } = await execAsync(
+          `powershell -NoProfile -Command "$p = (Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess; if ($p) { Write-Output $p; $proc = Get-CimInstance Win32_Process -Filter \\"ProcessId = $p\\" -ErrorAction SilentlyContinue; Write-Output $proc.Name; Write-Output $proc.CommandLine }"`
+        );
+        const [pidLine, nameLine, ...rest] = stdout.split(/\r?\n/);
+        const pid = Number(pidLine?.trim()) || null;
+        const processName = nameLine?.trim() ? nameLine.trim() : null;
+        const commandLine = rest.join(' ').trim() || null;
+        return { pid, processName, commandLine };
+      }
+      const { stdout: pidOut } = await execAsync(`lsof -nP -iTCP:${port} -sTCP:LISTEN -t | head -1`);
+      const pid = Number(pidOut.trim());
+      if (!pid) return { pid: null, processName: null, commandLine: null };
+      const { stdout: cmdOut } = await execAsync(`ps -o command= -p ${pid}`);
+      return { pid, processName: null, commandLine: cmdOut.trim() || null };
+    } catch {
+      return { pid: null, processName: null, commandLine: null };
+    }
+  }
+
+  /**
+   * Look for an already-running browser we could drive instead of launching a
+   * second Chrome: two Chromes cannot share a user-data dir, so attaching is
+   * always better than spawning a duplicate.
+   */
+  async findAttachableBrowser(options: {
+    ports?: number[];
+    profileDirectory?: string;
+    realUserDataDir?: string;
+    cloneRoot?: string;
+    /** Also inspect the owning process (slower) to learn its profile. */
+    deep?: boolean;
+  } = {}): Promise<{ target: CdpOwnerInfo | null; candidates: CdpOwnerInfo[]; reason: string }> {
+    const ports = options.ports?.length ? options.ports : DEFAULT_ATTACH_PORTS;
+    const deep = options.deep === true;
+    const unique = [...new Set([this.port, ...ports])];
+
+    // Probe in parallel: the scan runs on every lazy connect, so it must stay
+    // in the low milliseconds even with several dead ports.
+    const candidates = await Promise.all(
+      unique.map(async (port): Promise<CdpOwnerInfo> => {
+        const probe = await this.probeCdpPort(port, { verifyProcess: deep });
+        const info: CdpOwnerInfo = { port, ok: probe.ok, kind: 'unknown' };
+        if (probe.browser) info.browser = probe.browser;
+        if (probe.userAgent) info.userAgent = probe.userAgent;
+        if (probe.processName) info.processName = probe.processName;
+        if (probe.reason) info.reason = probe.reason;
+
+        if (probe.ok && deep) {
+          const owner = await this.portOwner(port);
+          if (owner.processName && !info.processName) info.processName = owner.processName;
+          if (owner.commandLine) {
+            info.commandLine = owner.commandLine;
+            const flags = parseChromeCommandLine(owner.commandLine);
+            info.flags = flags;
+            info.profileDirectory = flags.profileDirectory ?? DEFAULT_PROFILE_DIRECTORY;
+            info.kind = classifyOwnerKind(flags.userDataDir, {
+              realUserDataDir: options.realUserDataDir ?? getRealUserDataDir(),
+              cloneRoot: options.cloneRoot ?? getCloneRoot(),
+            });
+          }
+        }
+        return info;
+      })
+    );
+
+    const { target, reason } = rankAttachTarget(candidates, {
+      realUserDataDir: options.realUserDataDir ?? getRealUserDataDir(),
+      cloneRoot: options.cloneRoot ?? getCloneRoot(),
+      profileDirectory: options.profileDirectory,
+      preferredPort: this.port,
+    });
+    return { target, candidates, reason };
+  }
+
+  /** Point the connector at another CDP port (dropping any live connection). */
+  async setPort(port: number): Promise<void> {
+    if (this.port === port) return;
+    if (this.connection?.connected) await this.disconnect();
+    this.port = port;
+  }
+
+  /** Attach to an already-running browser found by findAttachableBrowser(). */
+  async attachTo(target: CdpOwnerInfo): Promise<{ tabs: number; url: string | null }> {
+    await this.setPort(target.port);
+    await this.connect();
+    const tabs = await this.listTabs();
+    const page = tabs.find((t) => t.type === 'page') ?? null;
+    console.error(
+      `✅ Attached to the existing browser on port ${target.port} (${target.kind}, profile ${
+        target.profileDirectory ?? '?'
+      }, ${tabs.length} target(s))`
+    );
+    return { tabs: tabs.length, url: page?.url ?? null };
+  }
+
   /** Image name of the process listening on the CDP port (best effort). */
-  private async processNameOnPort(): Promise<string | null> {
+  private async processNameOnPort(port: number = this.port): Promise<string | null> {
     if (os.platform() !== 'win32') return null;
     try {
       const { stdout } = await execAsync(
-        `powershell -NoProfile -Command "$p = (Get-NetTCPConnection -LocalPort ${this.port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess; if ($p) { (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName }"`
+        `powershell -NoProfile -Command "$p = (Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess; if ($p) { (Get-Process -Id $p -ErrorAction SilentlyContinue).ProcessName }"`
       );
       const name = stdout.trim();
       return name ? `${name}.exe` : null;
@@ -915,22 +1091,32 @@ export class ChromeConnector {
     }
   }
 
-  /** Is anything listening on the CDP port? */
-  private async isPortOccupied(): Promise<boolean> {
-    const platform = os.platform();
-    try {
-      const cmd =
-        platform === 'win32'
-          ? `powershell -NoProfile -Command "(Get-NetTCPConnection -LocalPort ${this.port} -State Listen -ErrorAction SilentlyContinue | Measure-Object).Count"`
-          : platform === 'darwin'
-            ? `lsof -nP -iTCP:${this.port} -sTCP:LISTEN`
-            : `lsof -nP -iTCP:${this.port} -sTCP:LISTEN || ss -ltn`;
-      const { stdout } = await execAsync(cmd);
-      if (platform === 'win32') return Number(stdout.trim()) > 0;
-      return stdout.trim().length > 0;
-    } catch {
-      return false;
-    }
+  /**
+   * Is anything listening on the CDP port?
+   *
+   * A plain TCP connect is used instead of shelling out to `netstat`/
+   * `Get-NetTCPConnection`: the scan probes several ports on every lazy connect,
+   * and spawning PowerShell per port cost hundreds of milliseconds each (enough
+   * to blow short tool timeouts).
+   */
+  private async isPortOccupied(port: number, timeoutMs = 400): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const socket = new net.Socket();
+      const done = (result: boolean) => {
+        socket.removeAllListeners();
+        socket.destroy();
+        resolve(result);
+      };
+      socket.setTimeout(timeoutMs);
+      socket.once('connect', () => done(true));
+      socket.once('timeout', () => done(false));
+      socket.once('error', () => done(false));
+      try {
+        socket.connect(port, '127.0.0.1');
+      } catch {
+        done(false);
+      }
+    });
   }
 
   /**
@@ -939,8 +1125,8 @@ export class ChromeConnector {
    * (msedgewebview2, Electron…) that also answers `/json/version` but is not
    * something the user can see or that we should be driving.
    */
-  private async isRealBrowserOnPort(): Promise<boolean> {
-    return (await this.probeCdpPort()).ok;
+  private async isRealBrowserOnPort(port: number = this.port): Promise<boolean> {
+    return (await this.probeCdpPort(port)).ok;
   }
 
   /**
@@ -962,14 +1148,16 @@ export class ChromeConnector {
       }
     }
 
-    console.error('[Lazy-init] Tool invoked without browser — checking port...');
+    console.error('[Lazy-init] Tool invoked without browser — looking for one to reuse...');
 
-    // Check if there is a real browser (not EdgeWebView2) on the CDP port
-    const realBrowser = await this.isRealBrowserOnPort();
-    if (realBrowser) {
+    // Look for a drivable browser on any of the usual ports: an already-open
+    // Chrome must be driven, never duplicated (two Chromes cannot share a
+    // user-data dir anyway).
+    const attach = await this.findAttachableBrowser();
+    if (attach.target) {
       try {
-        await this.connect();
-        console.error(`[Lazy-init] Connected to existing Chrome on port ${this.port}`);
+        await this.attachTo(attach.target);
+        console.error(`[Lazy-init] Connected to existing Chrome on port ${attach.target.port} (${attach.reason})`);
         await this.applyStealthMode();
 
         // Attach Playwright wrapper if possible
@@ -992,7 +1180,7 @@ export class ChromeConnector {
         console.error('[Lazy-init] Connection to existing browser failed:', (e as Error).message);
       }
     } else {
-      console.error(`[Lazy-init] Port ${this.port} has non-browser process (EdgeWebView2?). Launching Chrome...`);
+      console.error(`[Lazy-init] Nothing to attach to (${attach.reason}). Not auto-launching Chrome.`);
     }
 
     // ─── NO AUTO-LAUNCH ──────────────────────────────────────────────────────

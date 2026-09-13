@@ -943,3 +943,84 @@ export function getCloneStatus(cloneName: string, cloneRoot?: string): {
     sessionState: profileDirectory ? detectSessionState(clonePath, profileDirectory) : [],
   };
 }
+
+/**
+ * Is a Chrome currently using this profile?
+ *
+ * The reliable cross-platform signal is the cookie database: Chrome keeps an
+ * exclusive lock on it while it runs (deliberately, to defeat cookie stealers),
+ * so a read that fails with EBUSY/EPERM means "in use". `SingletonLock` is a
+ * POSIX-only secondary hint.
+ */
+export function isProfileInUse(
+  options: { realUserDataDir?: string; profileDirectory?: string } = {}
+): { inUse: boolean; profileDirectory: string; signal: string | null } {
+  const realUserDataDir = getRealUserDataDir(options.realUserDataDir);
+  const profileDirectory = options.profileDirectory ?? DEFAULT_PROFILE_DIRECTORY;
+  const profilePath = path.join(realUserDataDir, profileDirectory);
+
+  for (const rel of ['Network/Cookies', 'Cookies']) {
+    const file = path.join(profilePath, rel);
+    if (!fs.existsSync(file)) continue;
+    try {
+      const fd = fs.openSync(file, 'r');
+      fs.closeSync(fd);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+        return { inUse: true, profileDirectory, signal: `${rel} is locked by a running Chrome (${code})` };
+      }
+    }
+  }
+
+  const singleton = path.join(realUserDataDir, 'SingletonLock');
+  try {
+    if (fs.lstatSync(singleton)) {
+      return { inUse: true, profileDirectory, signal: 'SingletonLock present (a Chrome instance owns this user-data dir)' };
+    }
+  } catch {
+    /* no lock file */
+  }
+
+  return { inUse: false, profileDirectory, signal: null };
+}
+
+/**
+ * The exact steps a human must take to make an already-open Chrome attachable.
+ * Returned by the tools so the answer is never "it just cannot be done".
+ */
+export function attachRecipe(profileDirectory = DEFAULT_PROFILE_DIRECTORY): {
+  why: string;
+  options: { id: string; title: string; steps: string[] }[];
+} {
+  const clonePath = getClonePath(defaultCloneName(profileDirectory));
+  return {
+    why:
+      'A running Chrome can only be driven through the DevTools protocol, and it only opens that ' +
+      'endpoint when it was started with --remote-debugging-port. Chrome 136+ also ignores that switch ' +
+      'when the browser uses its DEFAULT user-data directory (security fix for cookie theft), so an ' +
+      'already-open regular Chrome cannot be attached to at all.',
+    options: [
+      {
+        id: 'use-the-clone',
+        title: 'Drive a clone of that profile (keeps the session, nothing to close daily)',
+        steps: [
+          'Close every Chrome window once (the cookie DB is locked while it runs).',
+          'clone_chrome_profile { "profile": "auto", "launch": true } — or just ask to open Chrome.',
+          `Keep using the window that opens on ${clonePath}: it is your session and the MCP attaches to it from then on.`,
+        ],
+      },
+      {
+        id: 'restart-with-port',
+        title: 'Restart Chrome so it exposes a debug port (then the MCP attaches to your real browser)',
+        steps: [
+          'Close Chrome completely.',
+          'Start it with a NON-default user-data dir plus the port, e.g.:',
+          '"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" --remote-debugging-port=9223 ' +
+            '--user-data-dir="%USERPROFILE%\\.chrome-mcp\\daily" --profile-directory=Default',
+          'Sign in once in that window; afterwards attach_to_running_chrome finds and reuses it automatically.',
+        ],
+      },
+    ],
+  };
+}

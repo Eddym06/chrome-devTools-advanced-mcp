@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.7.0] - 2026-09-13
+
+### 🔌 Attach to an already-open Chrome instead of launching a duplicate
+- **New `attach_to_running_chrome` tool.** Scans the usual CDP ports (9222-9225, 9333 and the
+  server's own `--port`), verifies each endpoint is a real browser, reads the owning process
+  command line to learn its `--user-data-dir`/`--profile-directory`, and attaches to the best
+  match (your real profile first, then a managed clone). Returns the tabs/URL it landed on.
+- **`launch_chrome_with_profile` is now attach-first.** Before spawning anything it looks for a
+  browser it can reuse; two Chromes cannot share a user-data dir, so reusing is always better than
+  launching a second one. The result reports `reusedExistingBrowser`, `attachedPort` and
+  `attachedKind`, and the message says plainly that nothing was launched.
+- **Lazy connect reuses too.** `ensureConnected` (the silent path used by every tool) now scans for
+  an attachable browser instead of only looking at its own port.
+- **Honest answer when it is impossible.** If a Chrome with the requested profile is open *without*
+  a debug port, the tools say exactly that (detected by the locked cookie DB / `SingletonLock`) and
+  return a recipe: `use-the-clone` (close Chrome once, then drive the clone) or `restart-with-port`
+  (start Chrome with a non-default user-data dir plus `--remote-debugging-port`). Pass
+  `ifProfileInUse: "fail"` to refuse the clone and get the recipe as an error instead.
+  This is a real limit: Chrome 136+ ignores `--remote-debugging-port` for the default user-data
+  directory, so an already-open normal Chrome cannot be attached to at all.
+
+### 🧪 Tests
+- `src/tests/attach.test.ts` (14 tests): command-line flag parsing, owner classification
+  (real profile vs managed clone vs unknown), attach-target ranking, profile-in-use detection and
+  the recipe text.
+
 ## [1.6.0] - 2026-09-13
 
 ### 👤 Real profile cloning & session carry-over (4 new tools)

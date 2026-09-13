@@ -75,6 +75,20 @@ export const EXTRA_OUTPUT_SCHEMAS: Record<string, z.ZodType> = {
     ...common,
   }),
   remove_chrome_profile_clone: envelope({ removed: z.string().optional(), cloneName: z.string().optional(), error: z.string().optional(), ...common }),
+  attach_to_running_chrome: envelope({
+    attached: z.boolean().optional(),
+    port: z.number().optional(),
+    browser: z.string().optional(),
+    kind: z.string().optional(),
+    profileDirectory: z.string().optional(),
+    targets: z.number().optional(),
+    currentUrl: z.string().nullable().optional(),
+    chromeRunningWithThisProfile: z.boolean().optional(),
+    why: z.string().optional(),
+    nextStep: z.string().optional(),
+    error: z.string().optional(),
+    ...common,
+  }),
 
   // ── Navigation & tabs
   browser_action: envelope(common),
